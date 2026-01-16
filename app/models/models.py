@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, Date, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, func, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base  # idealmente mover Base aquí
@@ -61,13 +61,23 @@ class Pedido(Base):
         index=True,
     )
 
-    fecha_pedido: Mapped[date] = mapped_column(Date, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )
+
+    fecha_entrega: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+        server_default=func.current_date(),
+    )
+
     cantidad_balones: Mapped[int] = mapped_column(Integer)
-
-    total_soles: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    total_soles: Mapped[int] = mapped_column(Integer)
     pagado: Mapped[bool] = mapped_column(Boolean, default=True)
-    saldo_pendiente: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0.00"))
-
-    cliente: Mapped[Cliente] = relationship(back_populates="pedidos")
-    direccion: Mapped[Direccion] = relationship(back_populates="pedidos")
-    
+    saldo_pendiente: Mapped[int] = mapped_column(Integer, default=0)
+    cliente: Mapped["Cliente"] = relationship(back_populates="pedidos")
+    direccion: Mapped["Direccion"] = relationship(back_populates="pedidos")

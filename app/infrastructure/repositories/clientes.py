@@ -3,14 +3,14 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Cliente, Direccion
 
-def crear_cliente(db: Session, alias: str, telefono: str, direccion: str) -> Cliente:
+def crear_cliente(db: Session, alias: str, telefono: str) -> Cliente:
     cliente = Cliente(alias=alias, telefono=telefono, nombre=None)
     db.add(cliente)
-    db.flush()  # obtiene cliente.id sin commit
-
+    db.flush()
+    
     dir1 = Direccion(
         cliente_id=cliente.id,
-        texto_original=direccion,
+        texto_original=alias,
         distrito=None,
         referencia=None,
         activa=True,

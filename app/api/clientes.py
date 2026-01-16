@@ -10,11 +10,16 @@ router = APIRouter(prefix="/clientes", tags=["clientes"])
 @router.post("/", response_model=ClienteOut, status_code=status.HTTP_201_CREATED)
 def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
     try:
-        return repo.crear_cliente(
+        cliente = repo.crear_cliente(
             db,
             alias=payload.alias.strip(),
             telefono=payload.telefono.strip(),
-            direccion=payload.direccion.strip(),
+        )
+        return ClienteOut(
+            id=cliente.id,
+            alias=cliente.alias,
+            telefono=cliente.telefono,
+            direccion=cliente.alias,
         )
     except IntegrityError:
         db.rollback()

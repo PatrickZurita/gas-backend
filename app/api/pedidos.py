@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
-
+from datetime import date
 from app.api.deps import DbSession
 from app.schemas.pedido import PedidoCreate, PedidoOut
 from app.infrastructure.repositories import clientes as repo_clientes
@@ -14,10 +14,12 @@ def crear_pedido(payload: PedidoCreate, db: DbSession):
     if not cliente:
         raise HTTPException(status_code=404, detail="Cliente no existe")
 
+    fecha_entrega = payload.fecha_entrega or date.today()
+
     return repo_pedidos.crear_pedido(
         db=db,
         cliente=cliente,
-        fecha_pedido=payload.fecha_pedido,
+        fecha_entrega=fecha_entrega,
         cantidad_balones=payload.cantidad_balones,
         total_soles=payload.total_soles,
         pagado=payload.pagado,

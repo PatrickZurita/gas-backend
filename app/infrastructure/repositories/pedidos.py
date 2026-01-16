@@ -39,7 +39,7 @@ def buscar_pedidos_por_cliente(db: Session, cliente_id: int, limit: int = 50) ->
     stmt = (
         select(Pedido)
         .where(Pedido.cliente_id == cliente_id)
-        .order_by(Pedido.fecha_pedido.desc(), Pedido.id.desc())
+        .order_by(Pedido.created_at.desc(), Pedido.id.desc())
         .limit(limit)
     )
     return list(db.execute(stmt).scalars().all())
@@ -47,11 +47,11 @@ def buscar_pedidos_por_cliente(db: Session, cliente_id: int, limit: int = 50) ->
 def crear_pedido(
     db: Session,
     cliente: Cliente,
-    fecha_pedido: date,
+    fecha_entrega: date,
     cantidad_balones: int,
-    total_soles: Decimal,
+    total_soles: int,
     pagado: bool = True,
-    saldo_pendiente: Decimal = Decimal("0.00"),
+    saldo_pendiente: int | None = None,
     observacion: str | None = None,
 ) -> Pedido:
     try:
@@ -60,17 +60,22 @@ def crear_pedido(
         pedido = Pedido(
             cliente_id=cliente.id,
             direccion_id=direccion.id,
-            fecha_pedido=fecha_pedido,
+            fecha_entrega=fecha_entrega,
             cantidad_balones=cantidad_balones,
             total_soles=total_soles,
             pagado=pagado,
-            saldo_pendiente=saldo_pendiente,
+            saldo_pendiente=(
+                saldo_pendiente
+                if saldo_pendiente is not None
+                else (0 if pagado else total_soles)
+            ),
         )
 
         db.add(pedido)
         db.commit()
         db.refresh(pedido)
         return pedido
+
     except Exception:
         db.rollback()
         raise
