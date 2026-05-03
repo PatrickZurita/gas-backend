@@ -1,0 +1,7 @@
+INFO:     127.0.0.1:62160 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62156 - "GET /clientes/search?q=Test%20Cliente%20Debug&limit=10 HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62158 - "POST /clientes/ HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:62444 - "GET /clientes/search?q=Test%20Cliente%20Debug&limit=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62446 - "POST /clientes/ HTTP/1.1" 201 Created
+INFO:     127.0.0.1:62448 - "GET /docs HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62451 - "GET /clientes/search?q=Test%20Cliente%20Debug&limit=10 HTTP/1.1" 200 OK

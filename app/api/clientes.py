@@ -7,6 +7,14 @@ from app.infrastructure.repositories import clientes as repo
 
 router = APIRouter(prefix="/clientes", tags=["clientes"])
 
+def _cliente_to_out(cliente) -> ClienteOut:
+    return ClienteOut(
+        id=cliente.id,
+        alias=cliente.alias,
+        telefono=cliente.telefono,
+        direccion=cliente.alias,
+    )
+
 @router.post("/", response_model=ClienteOut, status_code=status.HTTP_201_CREATED)
 def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
     try:
@@ -15,12 +23,7 @@ def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
             alias=payload.alias.strip(),
             telefono=payload.telefono.strip(),
         )
-        return ClienteOut(
-            id=cliente.id,
-            alias=cliente.alias,
-            telefono=cliente.telefono,
-            direccion=cliente.alias,
-        )
+        return _cliente_to_out(cliente)
     except IntegrityError:
         db.rollback()
         raise HTTPException(
@@ -39,7 +42,8 @@ def search_clientes(
         raise HTTPException(status_code=422, detail="q no puede ser vacío.")
 
     try:
-        return repo.buscar_clientes(db, q=q_clean, limit=limit)
+        clientes = repo.buscar_clientes(db, q=q_clean, limit=limit)
+        return [_cliente_to_out(cliente) for cliente in clientes]
     except Exception:
         raise HTTPException(status_code=500, detail="Error interno al buscar clientes.")
     
@@ -51,4 +55,4 @@ def obtener_cliente(
     cliente = repo.obtener_cliente_por_id(db, cliente_id)
     if cliente is None:
         raise HTTPException(status_code=404, detail="Cliente no existe")
-    return cliente
+    return _cliente_to_out(cliente)
