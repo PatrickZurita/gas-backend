@@ -10,6 +10,31 @@ venv/
 
 # Environment variables
 .env
+.env.*
+*.env
+
+# Sensitive files
+*.csv
+*.pem
+*.key
+credentials
+*credentials*.csv
+
+# Logs
+*.log
+server.out.log
+server.err.log
+logs/
+
+# Terraform / packaging artifacts
+**/.terraform/
+**/.terragrunt-cache/
+*.tfstate
+*.tfstate.*
+*.tfvars
+build/
+dist/
+*.zip
 
 # OS
 .DS_Store
@@ -20,3 +45,6 @@ Thumbs.db
 
 # Alembic cache
 alembic/versions/__pycache__/
+
+# Test cache
+.pytest_cache/
