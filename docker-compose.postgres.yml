@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gas-postgres-local
+    environment:
+      POSTGRES_DB: gas_mvp_local
+      POSTGRES_USER: gas_local
+      POSTGRES_PASSWORD: gas_local_password
+    ports:
+      - "55432:5432"
+    volumes:
+      - gas_postgres_local_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gas_local -d gas_mvp_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  gas_postgres_local_data:

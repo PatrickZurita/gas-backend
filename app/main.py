@@ -1,8 +1,11 @@
 import os
 
 from fastapi import FastAPI
+from app.api.catalogos import router as catalogos_router
 from app.api.clientes import router as clientes_router
 from app.api.pedidos import router as pedidos_router
+from app.api.reportes import router as reportes_router
+from app.api.stock import router as stock_router
 
 app = FastAPI(title="Gas Backend", version="0.1.0")
 
@@ -19,3 +22,6 @@ def health() -> dict[str, str]:
 
 app.include_router(clientes_router)
 app.include_router(pedidos_router)
+app.include_router(reportes_router)
+app.include_router(stock_router)
+app.include_router(catalogos_router)

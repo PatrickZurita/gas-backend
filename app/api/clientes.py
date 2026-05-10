@@ -2,7 +2,7 @@ from fastapi import APIRouter, Path, Query, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import DbSession
-from app.schemas.cliente import ClienteCreate, ClienteOut
+from app.schemas.cliente import ClienteCreate, ClienteOut, ClienteRecienteOut
 from app.infrastructure.repositories import clientes as repo
 
 router = APIRouter(prefix="/clientes", tags=["clientes"])
@@ -14,6 +14,11 @@ def _cliente_to_out(cliente) -> ClienteOut:
         telefono=cliente.telefono,
         direccion=cliente.alias,
     )
+
+def _monto_total_centavos(pedido) -> int:
+    if pedido.monto_total_centavos is not None:
+        return pedido.monto_total_centavos
+    return int(pedido.total_soles * 100)
 
 @router.post("/", response_model=ClienteOut, status_code=status.HTTP_201_CREATED)
 def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
@@ -46,6 +51,28 @@ def search_clientes(
         return [_cliente_to_out(cliente) for cliente in clientes]
     except Exception:
         raise HTTPException(status_code=500, detail="Error interno al buscar clientes.")
+
+@router.get(
+    "/recientes",
+    response_model=list[ClienteRecienteOut],
+    status_code=status.HTTP_200_OK,
+)
+def listar_clientes_recientes(
+    db: DbSession,
+    limit: int = Query(10, ge=1, le=50),
+) -> list[ClienteRecienteOut]:
+    recientes = repo.listar_clientes_recientes(db, limit=limit)
+    return [
+        ClienteRecienteOut(
+            id=cliente.id,
+            alias=cliente.alias,
+            telefono=cliente.telefono,
+            direccion=cliente.alias,
+            ultimo_pedido_fecha=pedido.fecha_entrega,
+            ultimo_total_centavos=_monto_total_centavos(pedido),
+        )
+        for cliente, pedido in recientes
+    ]
     
 @router.get("/{cliente_id}", response_model=ClienteOut, status_code=status.HTTP_200_OK)
 def obtener_cliente(
