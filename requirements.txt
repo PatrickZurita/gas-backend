@@ -7,3 +7,4 @@ alembic
 psycopg[binary]
 mangum
 tzdata
+boto3
