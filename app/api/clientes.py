@@ -77,7 +77,7 @@ def listar_clientes_recientes(
 @router.get("/{cliente_id}", response_model=ClienteOut, status_code=status.HTTP_200_OK)
 def obtener_cliente(
     db: DbSession,
-    cliente_id: int = Path(..., ge=1),
+    cliente_id: str = Path(..., min_length=1, max_length=64),
 ) -> ClienteOut:
     cliente = repo.obtener_cliente_por_id(db, cliente_id)
     if cliente is None:

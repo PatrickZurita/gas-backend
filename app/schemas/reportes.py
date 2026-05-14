@@ -5,8 +5,8 @@ from app.schemas.stock import StockResumenOut
 
 
 class PedidoReporteDiaOut(BaseModel):
-    id: int
-    cliente_id: int
+    id: int | str
+    cliente_id: int | str
     cliente_alias: str
     cantidad_balones: int
     tipo_balon: str
@@ -31,8 +31,8 @@ class ReporteDiaOut(BaseModel):
 
 
 class PedidoDeudaOut(BaseModel):
-    id: int
-    cliente_id: int
+    id: int | str
+    cliente_id: int | str
     cliente_alias: str
     cantidad_balones: int
     tipo_balon: str

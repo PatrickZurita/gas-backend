@@ -56,7 +56,7 @@ def crear_pedido(payload: PedidoCreate, db: DbSession):
 @router.get("", response_model=list[PedidoOut])
 def listar_pedidos(
     db: DbSession,
-    cliente_id: int = Query(..., ge=1),
+    cliente_id: str = Query(..., min_length=1, max_length=64),
     limit: int = Query(50, ge=1, le=200),
 ):
     cliente = repo_clientes.obtener_cliente(db, cliente_id)

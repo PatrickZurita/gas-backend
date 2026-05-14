@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.models import Cliente, Direccion, Pedido
+from app.infrastructure.repositories._id_helpers import to_pg_id
 
 def crear_cliente(db: Session, alias: str, telefono: str) -> Cliente:
     cliente = Cliente(alias=alias, telefono=telefono, nombre=None)
@@ -31,11 +32,11 @@ def buscar_clientes(db: Session, q: str, limit: int = 10) -> list[Cliente]:
     )
     return list(db.execute(stmt).scalars().all())
 
-def obtener_cliente(db: Session, cliente_id: int) -> Cliente | None:
-    return db.get(Cliente, cliente_id)
+def obtener_cliente(db: Session, cliente_id: int | str) -> Cliente | None:
+    return db.get(Cliente, to_pg_id(cliente_id))
 
-def obtener_cliente_por_id(db: Session, cliente_id: int) -> Cliente | None:
-    return db.get(Cliente, cliente_id)
+def obtener_cliente_por_id(db: Session, cliente_id: int | str) -> Cliente | None:
+    return db.get(Cliente, to_pg_id(cliente_id))
 
 def listar_clientes_recientes(db: Session, limit: int = 10) -> list[tuple[Cliente, Pedido]]:
     stmt = (

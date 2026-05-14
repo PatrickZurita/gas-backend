@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import Pedido, Direccion, Cliente
 from app.infrastructure.repositories import stock as repo_stock
+from app.infrastructure.repositories._id_helpers import to_pg_id
 
 
 def _get_or_create_direccion_default(db: Session, cliente: Cliente) -> Direccion:
@@ -36,10 +37,11 @@ def _get_or_create_direccion_default(db: Session, cliente: Cliente) -> Direccion
     db.flush()  # obtiene direccion.id sin commit todavía
     return direccion
 
-def buscar_pedidos_por_cliente(db: Session, cliente_id: int, limit: int = 50) -> list[Pedido]:
+def buscar_pedidos_por_cliente(db: Session, cliente_id: int | str, limit: int = 50) -> list[Pedido]:
+    pg_id = to_pg_id(cliente_id)
     stmt = (
         select(Pedido)
-        .where(Pedido.cliente_id == cliente_id)
+        .where(Pedido.cliente_id == pg_id)
         .order_by(Pedido.created_at.desc(), Pedido.id.desc())
         .limit(limit)
     )

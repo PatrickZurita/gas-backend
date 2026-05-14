@@ -10,7 +10,7 @@ TIPOS_BALON_VALIDOS = {TIPO_BALON_NORMAL, TIPO_BALON_PREMIUM}
 MARCAS_BALON_VALIDAS = {MARCA_BALON_SOLGAS, MARCA_BALON_PETROPERU}
 
 class PedidoCreate(BaseModel):
-    cliente_id: int
+    cliente_id: int | str
     fecha_entrega: date | None = None
     cantidad_balones: int = Field(ge=1, le=20)
     total_soles: Decimal | None = Field(default=None, ge=0, decimal_places=2)
@@ -50,9 +50,9 @@ class PedidoCreate(BaseModel):
         return self
 
 class PedidoOut(BaseModel):
-    id: int
-    cliente_id: int
-    direccion_id: int
+    id: int | str
+    cliente_id: int | str
+    direccion_id: int | str
     created_at: datetime
     fecha_entrega: date
     cantidad_balones: int

@@ -22,11 +22,11 @@ class StockAjusteIn(BaseModel):
 
 
 class MovimientoStockOut(BaseModel):
-    id: int
+    id: int | str
     tipo: str
     cantidad_delta: int
     stock_resultante: int
-    pedido_id: int | None
+    pedido_id: int | str | None
     observacion: str | None
     created_at: datetime
 

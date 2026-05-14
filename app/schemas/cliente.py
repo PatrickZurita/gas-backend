@@ -6,16 +6,16 @@ class ClienteCreate(BaseModel):
     telefono: str = Field(min_length=6, max_length=30)
 
 class ClienteOut(BaseModel):
-    id: int
+    id: int | str
     alias: str
     telefono: str
     direccion: str
-    
+
     class Config:
         from_attributes = True
 
 class ClienteRecienteOut(BaseModel):
-    id: int
+    id: int | str
     alias: str
     telefono: str
     direccion: str
