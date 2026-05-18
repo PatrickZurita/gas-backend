@@ -4,7 +4,6 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import DbSession
-from app.infrastructure.repositories import stock as repo_stock
 from app.schemas.stock import (
     StockAjusteIn,
     StockDiaOut,
@@ -12,6 +11,12 @@ from app.schemas.stock import (
     StockIniciarDiaIn,
     StockOperacionOut,
     StockResumenOut,
+)
+from app.services import stock as service_stock
+from app.services.errors import (
+    StockCerradoError,
+    StockNoIniciadoError,
+    StockYaIniciadoError,
 )
 
 router = APIRouter(prefix="/stock", tags=["stock"])
@@ -27,15 +32,12 @@ def _resolve_fecha(fecha: date | None) -> date:
 
 @router.get("/resumen-hoy", response_model=StockResumenOut)
 def obtener_stock_resumen_hoy(db: DbSession) -> StockResumenOut:
-    return StockResumenOut(**repo_stock.construir_resumen(db, _fecha_hoy_lima()))
+    return service_stock.resumen(db, fecha=_fecha_hoy_lima())
 
 
 @router.get("/dia", response_model=StockDiaOut)
 def obtener_stock_dia(db: DbSession, fecha: date) -> StockDiaOut:
-    resumen = repo_stock.construir_resumen(db, fecha)
-    jornada = repo_stock.obtener_jornada_por_fecha(db, fecha)
-    movimientos = [] if jornada is None else repo_stock.listar_movimientos(db, jornada.id)
-    return StockDiaOut(**resumen, movimientos=movimientos)
+    return service_stock.stock_dia(db, fecha=fecha)
 
 
 @router.post(
@@ -45,76 +47,54 @@ def obtener_stock_dia(db: DbSession, fecha: date) -> StockDiaOut:
 )
 def iniciar_dia(payload: StockIniciarDiaIn, db: DbSession) -> StockResumenOut:
     fecha = _resolve_fecha(payload.fecha)
-    if repo_stock.obtener_jornada_por_fecha(db, fecha) is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="El stock del dia ya fue iniciado.",
+    try:
+        return service_stock.iniciar_dia(
+            db,
+            fecha=fecha,
+            stock_inicial=payload.stock_inicial,
+            observacion=payload.observacion,
         )
-
-    repo_stock.iniciar_dia(
-        db,
-        fecha=fecha,
-        stock_inicial=payload.stock_inicial,
-        observacion=payload.observacion,
-    )
-    return StockResumenOut(**repo_stock.construir_resumen(db, fecha))
+    except StockYaIniciadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/entrada", response_model=StockOperacionOut)
 def registrar_entrada(payload: StockEntradaIn, db: DbSession) -> StockOperacionOut:
     fecha = _resolve_fecha(payload.fecha)
-    jornada = repo_stock.obtener_jornada_por_fecha(db, fecha)
-    if jornada is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="El stock del dia no fue iniciado.",
+    try:
+        return service_stock.registrar_entrada(
+            db,
+            fecha=fecha,
+            cantidad=payload.cantidad,
+            observacion=payload.observacion,
         )
-    if jornada.cerrado:
+    except StockNoIniciadoError as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="El stock del dia esta cerrado.",
-        )
-
-    movimiento = repo_stock.registrar_entrada(
-        db,
-        jornada=jornada,
-        cantidad=payload.cantidad,
-        observacion=payload.observacion,
-    )
-    return StockOperacionOut(
-        fecha=fecha,
-        tipo=movimiento.tipo,
-        cantidad_delta=movimiento.cantidad_delta,
-        stock_actual=movimiento.stock_resultante,
-        observacion=movimiento.observacion,
-    )
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except StockCerradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
 
 @router.post("/ajuste", response_model=StockOperacionOut)
 def registrar_ajuste(payload: StockAjusteIn, db: DbSession) -> StockOperacionOut:
     fecha = _resolve_fecha(payload.fecha)
-    jornada = repo_stock.obtener_jornada_por_fecha(db, fecha)
-    if jornada is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="El stock del dia no fue iniciado.",
+    try:
+        return service_stock.registrar_ajuste(
+            db,
+            fecha=fecha,
+            stock_fisico=payload.stock_fisico,
+            observacion=payload.observacion,
         )
-    if jornada.cerrado:
+    except StockNoIniciadoError as exc:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="El stock del dia esta cerrado.",
-        )
-
-    movimiento = repo_stock.registrar_ajuste_a_stock_fisico(
-        db,
-        jornada=jornada,
-        stock_fisico=payload.stock_fisico,
-        observacion=payload.observacion,
-    )
-    return StockOperacionOut(
-        fecha=fecha,
-        tipo=repo_stock.TIPO_AJUSTE,
-        cantidad_delta=0 if movimiento is None else movimiento.cantidad_delta,
-        stock_actual=payload.stock_fisico,
-        observacion=payload.observacion,
-    )
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except StockCerradoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc

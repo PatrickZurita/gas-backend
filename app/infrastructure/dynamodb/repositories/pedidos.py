@@ -1,6 +1,7 @@
-"""Repositorio DynamoDB de pedidos (preparacion futura).
+"""Repositorio DynamoDB de pedidos.
 
-No esta cableado a routers. PostgreSQL sigue siendo el backend activo.
+Cableado por `app.services.pedidos` cuando `APP_STORAGE_BACKEND=dynamodb`.
+PostgreSQL sigue siendo el backend por defecto.
 
 Reglas:
 - `pedido_id` es UUID4 string generado por `generate_id()`.
@@ -10,6 +11,7 @@ Reglas:
   Query/Scan por fecha sin parsing en backend.
 - Multiples pedidos por `cliente_id`; listar por cliente se hace con
   `Scan` filtrado por bajo volumen MVP (1 usuario, 30-40 pedidos/dia).
+- Almacena tipo/marca y precio unitario para mantener contrato con Flutter.
 
 El tradeoff de `Scan` por `cliente_id` y por `fecha_entrega` es aceptable
 en MVP. Si crece el volumen, agregar GSIs sin cambiar el contrato del
@@ -36,6 +38,10 @@ class DynamoPedido:
     pagado_centavos: int
     pendiente_centavos: int
     pagado: bool
+    tipo_balon: str
+    marca_balon: str
+    precio_unitario_centavos: int | None
+    created_at: str
 
 
 def crear_pedido(
@@ -46,6 +52,9 @@ def crear_pedido(
     cantidad_balones: int,
     total_centavos: int,
     pagado_centavos: int,
+    tipo_balon: str = "NORMAL",
+    marca_balon: str = "PETROPERU",
+    precio_unitario_centavos: int | None = None,
 ) -> DynamoPedido:
     if cantidad_balones <= 0:
         raise ValueError("cantidad_balones debe ser positivo.")
@@ -57,7 +66,7 @@ def crear_pedido(
 
     pedido_id = generate_id()
     now = datetime.now(UTC).isoformat()
-    item = {
+    item: dict[str, Any] = {
         "pedido_id": pedido_id,
         "cliente_id": cliente_id,
         "cliente_alias": cliente_alias,
@@ -67,9 +76,13 @@ def crear_pedido(
         "pagado_centavos": pagado_centavos,
         "pendiente_centavos": pendiente_centavos,
         "pagado": pagado,
+        "tipo_balon": tipo_balon,
+        "marca_balon": marca_balon,
         "created_at": now,
         "updated_at": now,
     }
+    if precio_unitario_centavos is not None:
+        item["precio_unitario_centavos"] = precio_unitario_centavos
 
     table = get_table(get_dynamodb_tables().pedidos)
     table.put_item(
@@ -108,6 +121,7 @@ def listar_pedidos_por_fecha(fecha_entrega: str, limit: int = 200) -> list[Dynam
 
 
 def _pedido_from_item(item: dict[str, Any]) -> DynamoPedido:
+    precio = item.get("precio_unitario_centavos")
     return DynamoPedido(
         id=str(item.get("pedido_id", "")),
         cliente_id=str(item.get("cliente_id", "")),
@@ -118,6 +132,10 @@ def _pedido_from_item(item: dict[str, Any]) -> DynamoPedido:
         pagado_centavos=_to_int(item.get("pagado_centavos", 0)),
         pendiente_centavos=_to_int(item.get("pendiente_centavos", 0)),
         pagado=bool(item.get("pagado", False)),
+        tipo_balon=str(item.get("tipo_balon", "NORMAL")),
+        marca_balon=str(item.get("marca_balon", "PETROPERU")),
+        precio_unitario_centavos=_to_int(precio) if precio is not None else None,
+        created_at=str(item.get("created_at", "")),
     )
 
 

@@ -61,10 +61,10 @@ def deudas_por_cliente(fecha: str | None = None) -> dict[str, int]:
 
 
 def _scan_all_pedidos() -> list:
-    from app.infrastructure.dynamodb.client import get_table
-    from app.infrastructure.dynamodb.config import get_dynamodb_tables
-
-    table = get_table(get_dynamodb_tables().pedidos)
+    # Imports relativos al modulo `pedidos_repo` para que los tests que hacen
+    # monkeypatch de `pedidos_repo.get_table` y `pedidos_repo.get_dynamodb_tables`
+    # afecten tambien a esta funcion sin necesidad de monkeypatch adicional.
+    table = pedidos_repo.get_table(pedidos_repo.get_dynamodb_tables().pedidos)
     items: list = []
     response = table.scan()
     items.extend(response.get("Items", []))
