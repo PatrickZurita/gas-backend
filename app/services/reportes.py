@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from app.core.storage import is_dynamodb_enabled
+from app.core.time import fecha_hoy_lima
 from app.schemas.reportes import (
     PedidoDeudaOut,
     PedidoReporteDiaOut,
@@ -32,7 +33,7 @@ def _ddb_pedido_to_reporte_dia(p) -> PedidoReporteDiaOut:
     try:
         fecha = date_cls.fromisoformat(p.fecha_entrega)
     except ValueError:
-        fecha = date_cls.today()
+        fecha = fecha_hoy_lima()
     try:
         created_at = datetime.fromisoformat(p.created_at)
     except ValueError:

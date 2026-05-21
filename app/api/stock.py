@@ -1,9 +1,9 @@
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+from datetime import date
 
 from fastapi import APIRouter, HTTPException, status
 
 from app.api.deps import DbSession
+from app.core.time import fecha_hoy_lima
 from app.schemas.stock import (
     StockAjusteIn,
     StockDiaOut,
@@ -22,17 +22,13 @@ from app.services.errors import (
 router = APIRouter(prefix="/stock", tags=["stock"])
 
 
-def _fecha_hoy_lima() -> date:
-    return datetime.now(ZoneInfo("America/Lima")).date()
-
-
 def _resolve_fecha(fecha: date | None) -> date:
-    return fecha or _fecha_hoy_lima()
+    return fecha or fecha_hoy_lima()
 
 
 @router.get("/resumen-hoy", response_model=StockResumenOut)
 def obtener_stock_resumen_hoy(db: DbSession) -> StockResumenOut:
-    return service_stock.resumen(db, fecha=_fecha_hoy_lima())
+    return service_stock.resumen(db, fecha=fecha_hoy_lima())
 
 
 @router.get("/dia", response_model=StockDiaOut)

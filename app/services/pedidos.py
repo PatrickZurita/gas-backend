@@ -8,6 +8,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import TYPE_CHECKING
 
 from app.core.storage import is_dynamodb_enabled
+from app.core.time import fecha_hoy_lima
 from app.schemas.pedido import PedidoCreate, PedidoOut
 from app.services.errors import ClienteNoExisteError
 
@@ -60,7 +61,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
     monto_pendiente_centavos = _resolve_monto_pendiente_centavos(
         payload, monto_total_centavos
     )
-    fecha_entrega = payload.fecha_entrega or date_cls.today()
+    fecha_entrega = payload.fecha_entrega or fecha_hoy_lima()
 
     if is_dynamodb_enabled():
         from app.infrastructure.dynamodb.repositories import (
