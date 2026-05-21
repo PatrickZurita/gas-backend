@@ -26,6 +26,11 @@ server.out.log
 server.err.log
 logs/
 
+# SQLite locales de pruebas (no commitear)
+*.db
+*.sqlite
+*.sqlite3
+
 # Terraform / packaging artifacts
 **/.terraform/
 **/.terragrunt-cache/

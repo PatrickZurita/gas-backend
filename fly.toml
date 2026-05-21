@@ -1,0 +1,40 @@
+# Fly.io config para gas-backend (deploy temporal mientras AWS se resuelve).
+# Despues de `flyctl launch`, Fly va a regenerar este archivo; revisa que
+# mantiene `internal_port = 8080`, `auto_stop_machines = "stop"` y la
+# seccion `[http_service.checks]`.
+
+app = "gas-backend-mvp"
+primary_region = "scl"   # Santiago. Cambia a "gru" (Sao Paulo) o "mia" si te queda mejor.
+
+[build]
+
+[env]
+  APP_ENV = "fly"
+  APP_VERSION = "fly-mvp"
+  APP_STORAGE_BACKEND = "postgres"
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 256

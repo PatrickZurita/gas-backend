@@ -1,0 +1,3 @@
+# Forzar LF en scripts shell para que arranquen bien en el container Linux de Fly.io
+*.sh text eol=lf
+Dockerfile text eol=lf
