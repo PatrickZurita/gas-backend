@@ -71,4 +71,6 @@ def _scan_all_pedidos() -> list:
     while "LastEvaluatedKey" in response:
         response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
         items.extend(response.get("Items", []))
-    return [pedidos_repo._pedido_from_item(it) for it in items]
+    # Excluir anulados: ningun reporte (resumen/deudas) cuenta pedidos ANULADO.
+    pedidos = [pedidos_repo._pedido_from_item(it) for it in items]
+    return [p for p in pedidos if p.estado != "ANULADO"]

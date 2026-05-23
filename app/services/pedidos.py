@@ -86,6 +86,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
             tipo_balon=payload.tipo_balon,
             marca_balon=payload.marca_balon,
             precio_unitario_centavos=precio_unitario_centavos,
+            peso_balon_kg=payload.peso_balon_kg,
         )
 
         # Side effect de stock: si la jornada existe y no esta cerrada, registrar
@@ -98,6 +99,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
                 pedido_id=pedido.id,
                 marca_balon=payload.marca_balon,
                 tipo_balon=payload.tipo_balon,
+                peso_balon_kg=payload.peso_balon_kg,
             )
         except Exception:
             # El stock-side-effect no debe romper el pedido en DDB MVP.
@@ -123,6 +125,10 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
             pagado=pedido.pagado,
             saldo_pendiente=_centavos_a_soles(pedido.pendiente_centavos),
             monto_pendiente_centavos=pedido.pendiente_centavos,
+            estado=pedido.estado,
+            anulado_at=_parse_dt(pedido.anulado_at),
+            anulado_motivo=pedido.anulado_motivo,
+            peso_balon_kg=pedido.peso_balon_kg,
         )
 
     from app.infrastructure.repositories import clientes as repo_clientes
@@ -158,8 +164,18 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
         saldo_pendiente=saldo_pendiente,
         monto_pendiente_centavos=monto_pendiente_centavos,
         observacion=payload.observacion,
+        peso_balon_kg=payload.peso_balon_kg,
     )
     return PedidoOut.model_validate(pedido, from_attributes=True)
+
+
+def _parse_dt(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def listar_pedidos_por_cliente(
@@ -216,3 +232,284 @@ def listar_pedidos_por_cliente(
         session, cliente_id=cliente_id, limit=limit
     )
     return [PedidoOut.model_validate(p, from_attributes=True) for p in rows]
+
+
+class PedidoNoExisteError(Exception):
+    """Pedido no encontrado (404)."""
+
+
+class PedidoAnuladoNoEditableError(Exception):
+    """Intento de editar pedido anulado (409)."""
+
+
+def anular_pedido(
+    db: "Session | None",
+    pedido_id: int | str,
+    *,
+    motivo: str | None = None,
+) -> PedidoOut:
+    """Marca el pedido como ANULADO y compensa stock (idempotente).
+
+    Si el pedido ya estaba ANULADO no se vuelve a compensar el stock; el
+    endpoint devuelve 200 con el estado actual. Esto evita doble reversa en
+    reintentos del cliente.
+    """
+    if is_dynamodb_enabled():
+        return _anular_pedido_ddb(pedido_id, motivo=motivo)
+
+    from app.infrastructure.repositories import pedidos as repo_pedidos
+    from app.models.models import Pedido as PedidoModel
+
+    session = _require_db(db)
+    pg_id = _safe_int(pedido_id)
+    if pg_id is None or session.get(PedidoModel, pg_id) is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+
+    pedido = repo_pedidos.anular_pedido(session, pg_id, motivo=motivo)
+    return PedidoOut.model_validate(pedido, from_attributes=True)
+
+
+def patch_pedido(
+    db: "Session | None",
+    pedido_id: int | str,
+    *,
+    cantidad_balones: int | None = None,
+    precio_unitario_centavos: int | None = None,
+    monto_total_centavos: int | None = None,
+    monto_pendiente_centavos: int | None = None,
+    pagado: bool | None = None,
+    fecha_entrega: date_cls | None = None,
+    peso_balon_kg: int | None = None,
+    motivo_edicion: str | None = None,
+) -> PedidoOut:
+    if is_dynamodb_enabled():
+        return _patch_pedido_ddb(
+            pedido_id=pedido_id,
+            cantidad_balones=cantidad_balones,
+            precio_unitario_centavos=precio_unitario_centavos,
+            monto_total_centavos=monto_total_centavos,
+            monto_pendiente_centavos=monto_pendiente_centavos,
+            pagado=pagado,
+            fecha_entrega=fecha_entrega,
+            peso_balon_kg=peso_balon_kg,
+            motivo_edicion=motivo_edicion,
+        )
+
+    from app.infrastructure.repositories import pedidos as repo_pedidos
+    from app.models.models import Pedido as PedidoModel
+
+    session = _require_db(db)
+    pg_id = _safe_int(pedido_id)
+    if pg_id is None or session.get(PedidoModel, pg_id) is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+
+    try:
+        pedido = repo_pedidos.patch_pedido(
+            session,
+            pg_id,
+            cantidad_balones=cantidad_balones,
+            precio_unitario_centavos=precio_unitario_centavos,
+            monto_total_centavos=monto_total_centavos,
+            monto_pendiente_centavos=monto_pendiente_centavos,
+            pagado=pagado,
+            fecha_entrega=fecha_entrega,
+            peso_balon_kg=peso_balon_kg,
+            motivo_edicion=motivo_edicion,
+        )
+    except repo_pedidos.PedidoAnuladoEditableError as exc:
+        raise PedidoAnuladoNoEditableError(str(exc)) from exc
+
+    return PedidoOut.model_validate(pedido, from_attributes=True)
+
+
+# ---------------------------------------------------------------------------
+# DynamoDB helpers
+# ---------------------------------------------------------------------------
+
+
+def _anular_pedido_ddb(pedido_id: int | str, *, motivo: str | None) -> PedidoOut:
+    from app.infrastructure.dynamodb.repositories import (
+        movimientos_stock as ddb_movs,
+    )
+    from app.infrastructure.dynamodb.repositories import pedidos as ddb_pedidos
+    from app.infrastructure.dynamodb.repositories import (
+        stock_jornadas as ddb_jornadas,
+    )
+
+    pedido_id_str = str(pedido_id)
+    actual = ddb_pedidos.obtener_pedido(pedido_id_str)
+    if actual is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+
+    ya_anulado = actual.estado == "ANULADO"
+    pedido = ddb_pedidos.anular_pedido(pedido_id_str, motivo=motivo)
+    if pedido is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+
+    # Compensar stock solo en la primera anulacion (idempotencia).
+    if not ya_anulado:
+        jornada = ddb_jornadas.obtener_jornada(pedido.fecha_entrega)
+        if jornada is not None and not jornada.cerrado:
+            try:
+                resultante = ddb_jornadas.aplicar_delta(
+                    pedido.fecha_entrega, pedido.cantidad_balones
+                )
+                ddb_movs.registrar_movimiento(
+                    fecha=pedido.fecha_entrega,
+                    tipo="REVERSA_ANULACION",
+                    cantidad_delta=pedido.cantidad_balones,
+                    stock_resultante=resultante,
+                    pedido_id=pedido.id,
+                    observacion="Reversa por anulacion de pedido",
+                    peso_balon_kg=pedido.peso_balon_kg,
+                )
+            except ValueError:
+                # Stock no puede compensarse (caso borde). El pedido queda
+                # anulado igual; el reporte excluira anulados de las metricas.
+                pass
+
+    return _ddb_pedido_to_out(pedido)
+
+
+def _patch_pedido_ddb(
+    *,
+    pedido_id: int | str,
+    cantidad_balones: int | None,
+    precio_unitario_centavos: int | None,
+    monto_total_centavos: int | None,
+    monto_pendiente_centavos: int | None,
+    pagado: bool | None,
+    fecha_entrega: date_cls | None,
+    peso_balon_kg: int | None,
+    motivo_edicion: str | None,
+) -> PedidoOut:
+    from app.infrastructure.dynamodb.repositories import (
+        movimientos_stock as ddb_movs,
+    )
+    from app.infrastructure.dynamodb.repositories import pedidos as ddb_pedidos
+    from app.infrastructure.dynamodb.repositories import (
+        stock_jornadas as ddb_jornadas,
+    )
+
+    pedido_id_str = str(pedido_id)
+    actual = ddb_pedidos.obtener_pedido(pedido_id_str)
+    if actual is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+    if actual.estado == "ANULADO":
+        raise PedidoAnuladoNoEditableError(
+            "No se puede editar un pedido anulado."
+        )
+
+    cantidad_vieja = actual.cantidad_balones
+    fecha_vieja = actual.fecha_entrega
+    peso_viejo = actual.peso_balon_kg
+
+    fields: dict = {}
+    if cantidad_balones is not None:
+        fields["cantidad_balones"] = cantidad_balones
+    if precio_unitario_centavos is not None:
+        fields["precio_unitario_centavos"] = precio_unitario_centavos
+    if monto_total_centavos is not None:
+        fields["total_centavos"] = monto_total_centavos
+    if monto_pendiente_centavos is not None:
+        # Derivamos pagado_centavos para mantener invariante.
+        total = monto_total_centavos or actual.total_centavos
+        fields["pagado_centavos"] = max(0, total - monto_pendiente_centavos)
+    if pagado is not None:
+        # Si se fuerza pagado, ajustamos pagado_centavos al total.
+        total = monto_total_centavos or actual.total_centavos
+        fields["pagado_centavos"] = total if pagado else 0
+    if fecha_entrega is not None:
+        fields["fecha_entrega"] = fecha_entrega.isoformat()
+    if peso_balon_kg is not None:
+        fields["peso_balon_kg"] = peso_balon_kg
+
+    if not fields:
+        return _ddb_pedido_to_out(actual)
+
+    pedido = ddb_pedidos.patch_pedido(pedido_id_str, **fields)
+    if pedido is None:
+        raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
+
+    stock_impactado = (
+        cantidad_balones is not None
+        or fecha_entrega is not None
+        or peso_balon_kg is not None
+    )
+    if stock_impactado:
+        # Reversa en jornada/peso viejo.
+        jornada_vieja = ddb_jornadas.obtener_jornada(fecha_vieja)
+        if jornada_vieja is not None and not jornada_vieja.cerrado:
+            try:
+                resultante = ddb_jornadas.aplicar_delta(fecha_vieja, cantidad_vieja)
+                ddb_movs.registrar_movimiento(
+                    fecha=fecha_vieja,
+                    tipo="REVERSA_ANULACION",
+                    cantidad_delta=cantidad_vieja,
+                    stock_resultante=resultante,
+                    pedido_id=pedido.id,
+                    observacion=motivo_edicion or "Reversa por edicion de pedido",
+                    peso_balon_kg=peso_viejo,
+                )
+            except ValueError:
+                pass
+        # Nueva salida en jornada/peso nuevo.
+        jornada_nueva = ddb_jornadas.obtener_jornada(pedido.fecha_entrega)
+        if jornada_nueva is not None and not jornada_nueva.cerrado:
+            try:
+                resultante = ddb_jornadas.aplicar_delta(
+                    pedido.fecha_entrega, -pedido.cantidad_balones
+                )
+                ddb_movs.registrar_movimiento(
+                    fecha=pedido.fecha_entrega,
+                    tipo="SALIDA_PEDIDO",
+                    cantidad_delta=-pedido.cantidad_balones,
+                    stock_resultante=resultante,
+                    pedido_id=pedido.id,
+                    observacion="Salida por edicion de pedido",
+                    peso_balon_kg=pedido.peso_balon_kg,
+                )
+            except ValueError:
+                pass
+
+    return _ddb_pedido_to_out(pedido)
+
+
+def _ddb_pedido_to_out(pedido) -> PedidoOut:
+    try:
+        created_at = datetime.fromisoformat(pedido.created_at)
+    except (TypeError, ValueError):
+        created_at = datetime.utcnow()
+    try:
+        fecha = date_cls.fromisoformat(pedido.fecha_entrega)
+    except (TypeError, ValueError):
+        fecha = fecha_hoy_lima()
+    return PedidoOut(
+        id=pedido.id,
+        cliente_id=pedido.cliente_id,
+        direccion_id=pedido.cliente_id,
+        created_at=created_at,
+        fecha_entrega=fecha,
+        cantidad_balones=pedido.cantidad_balones,
+        total_soles=_centavos_a_soles(pedido.total_centavos),
+        tipo_balon=pedido.tipo_balon,
+        marca_balon=pedido.marca_balon,
+        precio_unitario_centavos=pedido.precio_unitario_centavos,
+        monto_total_centavos=pedido.total_centavos,
+        pagado=pedido.pagado,
+        saldo_pendiente=_centavos_a_soles(pedido.pendiente_centavos),
+        monto_pendiente_centavos=pedido.pendiente_centavos,
+        estado=pedido.estado,
+        anulado_at=_parse_dt(pedido.anulado_at),
+        anulado_motivo=pedido.anulado_motivo,
+        peso_balon_kg=pedido.peso_balon_kg,
+    )
+
+
+def _safe_int(value: int | str) -> int | None:
+    if isinstance(value, int):
+        return value
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None

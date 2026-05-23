@@ -81,6 +81,14 @@ class Pedido(Base):
             "monto_pendiente_centavos IS NULL OR monto_pendiente_centavos >= 0",
             name="ck_pedidos_monto_pendiente_centavos_ge_0",
         ),
+        CheckConstraint(
+            "estado IN ('ACTIVO', 'ANULADO')",
+            name="ck_pedidos_estado_valido",
+        ),
+        CheckConstraint(
+            "peso_balon_kg IN (10, 45)",
+            name="ck_pedidos_peso_balon_kg_valido",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -135,6 +143,29 @@ class Pedido(Base):
         Integer,
         nullable=True,
     )
+    estado: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="ACTIVO",
+        server_default="ACTIVO",
+    )
+    anulado_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    anulado_motivo: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    peso_balon_kg: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=10,
+        server_default="10",
+    )
     cliente: Mapped["Cliente"] = relationship(back_populates="pedidos")
     direccion: Mapped["Direccion"] = relationship(back_populates="pedidos")
     movimientos_stock: Mapped[list["MovimientoStock"]] = relationship(
@@ -180,7 +211,8 @@ class MovimientoStock(Base):
     __tablename__ = "movimientos_stock"
     __table_args__ = (
         CheckConstraint(
-            "tipo IN ('INICIO_DIA', 'ENTRADA', 'SALIDA_PEDIDO', 'AJUSTE')",
+            "tipo IN ('INICIO_DIA', 'ENTRADA', 'SALIDA_PEDIDO', 'AJUSTE', "
+            "'REVERSA_ANULACION')",
             name="ck_movimientos_stock_tipo_valido",
         ),
     )
@@ -202,6 +234,8 @@ class MovimientoStock(Base):
     )
     marca_balon: Mapped[str | None] = mapped_column(String(30), nullable=True)
     tipo_balon: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    # V2.3: peso del balon que origino el movimiento. Legacy/sin peso = 10 kg.
+    peso_balon_kg: Mapped[int | None] = mapped_column(Integer, nullable=True)
     observacion: Mapped[str | None] = mapped_column(String(250), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

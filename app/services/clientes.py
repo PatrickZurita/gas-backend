@@ -105,6 +105,38 @@ def buscar_clientes(
     return [_cliente_pg_to_out(c) for c in rows]
 
 
+def listar_catalogo_clientes(
+    db: "Session | None",
+    *,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[ClienteOut]:
+    """V2.5: GET /clientes catalogo simple, sin paginar agresivamente.
+
+    Si `q` esta presente, filtra por alias/telefono (PostgreSQL ILIKE; DDB
+    scan + filtro en memoria). Sin `q`, devuelve hasta `limit` clientes
+    ordenados por id desc.
+    """
+    if is_dynamodb_enabled():
+        from app.infrastructure.dynamodb.repositories import clientes as ddb
+
+        # En MVP el volumen es bajo: scan completo y filtramos en memoria.
+        items = ddb.listar_catalogo(q=q, limit=limit, offset=offset)
+        return [
+            ClienteOut(
+                id=c.id, alias=c.alias, telefono=c.telefono, direccion=c.direccion
+            )
+            for c in items
+        ]
+
+    from app.infrastructure.repositories import clientes as pg
+
+    session = _require_db(db)
+    rows = pg.listar_catalogo(session, q=q, limit=limit, offset=offset)
+    return [_cliente_pg_to_out(c) for c in rows]
+
+
 def listar_clientes_recientes(
     db: "Session | None", *, limit: int
 ) -> list[ClienteRecienteOut]:

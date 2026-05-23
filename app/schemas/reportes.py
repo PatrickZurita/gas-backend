@@ -17,6 +17,7 @@ class PedidoReporteDiaOut(BaseModel):
     pagado: bool
     fecha_entrega: date
     created_at: datetime
+    peso_balon_kg: int = 10
 
 
 class ReporteDiaOut(BaseModel):
@@ -43,9 +44,47 @@ class PedidoDeudaOut(BaseModel):
     pagado: bool
     fecha_entrega: date
     created_at: datetime
+    peso_balon_kg: int = 10
 
 
 class ReporteDeudasOut(BaseModel):
     pedidos_count: int
     monto_pendiente_centavos: int
     pedidos: list[PedidoDeudaOut]
+
+
+class ResumenDiaDetalle(BaseModel):
+    """Detalle agregado de un dia operativo (V4 reportes semanal/mensual)."""
+
+    fecha: date
+    pedidos_count: int
+    balones_10kg: int
+    balones_45kg: int
+    vendido_centavos: int
+    cobrado_centavos: int
+    pendiente_centavos: int
+
+
+class ResumenSemana(BaseModel):
+    desde: date
+    hasta: date
+    total_pedidos: int
+    total_vendido_centavos: int
+    total_cobrado_centavos: int
+    total_pendiente_centavos: int
+    balones_10kg: int
+    balones_45kg: int
+    dias: list[ResumenDiaDetalle]
+
+
+class ResumenMes(BaseModel):
+    desde: date
+    hasta: date
+    mes: str  # YYYY-MM
+    total_pedidos: int
+    total_vendido_centavos: int
+    total_cobrado_centavos: int
+    total_pendiente_centavos: int
+    balones_10kg: int
+    balones_45kg: int
+    dias: list[ResumenDiaDetalle]

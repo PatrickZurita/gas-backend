@@ -9,6 +9,9 @@ MARCA_BALON_PETROPERU = "PETROPERU"
 TIPOS_BALON_VALIDOS = {TIPO_BALON_NORMAL, TIPO_BALON_PREMIUM}
 MARCAS_BALON_VALIDAS = {MARCA_BALON_SOLGAS, MARCA_BALON_PETROPERU}
 
+PESOS_BALON_VALIDOS = {10, 45}
+
+
 class PedidoCreate(BaseModel):
     cliente_id: int | str
     fecha_entrega: date | None = None
@@ -22,6 +25,7 @@ class PedidoCreate(BaseModel):
     saldo_pendiente: Decimal | None = Field(default=None, ge=0, decimal_places=2)
     monto_pendiente_centavos: int | None = Field(default=None, ge=0)
     observacion: str | None = Field(default=None, max_length=250)
+    peso_balon_kg: int = Field(default=10)
 
     @model_validator(mode="after")
     def validar_contrato(self) -> "PedidoCreate":
@@ -32,6 +36,8 @@ class PedidoCreate(BaseModel):
             raise ValueError("tipo_balon debe ser NORMAL o PREMIUM")
         if self.marca_balon not in MARCAS_BALON_VALIDAS:
             raise ValueError("marca_balon debe ser SOLGAS o PETROPERU")
+        if self.peso_balon_kg not in PESOS_BALON_VALIDOS:
+            raise ValueError("peso_balon_kg debe ser 10 o 45")
         if self.total_soles is None and self.monto_total_centavos is None:
             if self.precio_unitario_centavos is None:
                 raise ValueError(
@@ -64,6 +70,40 @@ class PedidoOut(BaseModel):
     pagado: bool
     saldo_pendiente: Decimal
     monto_pendiente_centavos: int | None
+    estado: str = "ACTIVO"
+    anulado_at: datetime | None = None
+    anulado_motivo: str | None = None
+    peso_balon_kg: int = 10
 
     class Config:
         from_attributes = True
+
+
+class PedidoAnularRequest(BaseModel):
+    motivo: str | None = Field(default=None, max_length=250)
+
+
+class PedidoPatch(BaseModel):
+    cantidad_balones: int | None = Field(default=None, ge=1, le=20)
+    precio_unitario_centavos: int | None = Field(default=None, ge=0)
+    monto_total_centavos: int | None = Field(default=None, ge=0)
+    monto_pendiente_centavos: int | None = Field(default=None, ge=0)
+    pagado: bool | None = None
+    fecha_entrega: date | None = None
+    peso_balon_kg: int | None = None
+    motivo_edicion: str | None = Field(default=None, max_length=250)
+
+    @model_validator(mode="after")
+    def validar_patch(self) -> "PedidoPatch":
+        if self.peso_balon_kg is not None and self.peso_balon_kg not in (10, 45):
+            raise ValueError("peso_balon_kg debe ser 10 o 45")
+        if (
+            self.monto_total_centavos is not None
+            and self.monto_pendiente_centavos is not None
+            and self.monto_pendiente_centavos > self.monto_total_centavos
+        ):
+            raise ValueError(
+                "monto_pendiente_centavos no puede ser mayor que "
+                "monto_total_centavos"
+            )
+        return self

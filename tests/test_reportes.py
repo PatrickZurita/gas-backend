@@ -98,6 +98,13 @@ def test_reporte_dia_sin_pedidos_devuelve_totales_en_cero(client):
     response = client.get("/reportes/dia", params={"fecha": "2026-01-16"})
 
     assert response.status_code == 200
+    bucket_vacio = {
+        "salidas": 0,
+        "entradas": 0,
+        "reversas": 0,
+        "ajustes": 0,
+        "stock_disponible": 0,
+    }
     assert response.json() == {
         "fecha": "2026-01-16",
         "pedidos_count": 0,
@@ -115,6 +122,7 @@ def test_reporte_dia_sin_pedidos_devuelve_totales_en_cero(client):
             "stock_actual": None,
             "stock_final_fisico": None,
             "cerrado": False,
+            "por_peso": {"10kg": bucket_vacio, "45kg": bucket_vacio},
         },
         "pedidos": [],
     }

@@ -30,6 +30,34 @@ def obtener_cliente_por_id(cliente_id: str) -> DynamoCliente | None:
     return _cliente_from_item(item)
 
 
+def listar_catalogo(
+    *,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[DynamoCliente]:
+    """V2.5: scan + filtrado en memoria (MVP). En volumen alto usar GSI."""
+    table = get_table(get_dynamodb_tables().clientes)
+    response = table.scan()
+    items = response.get("Items", [])
+    # Filtrar ALIAS_UNICO (alias locks) y solo conservar items tipo CLIENTE.
+    clientes = [
+        _cliente_from_item(item)
+        for item in items
+        if item.get("item_type", "CLIENTE") == "CLIENTE"
+    ]
+    if q:
+        q_norm = normalizar_alias(q)
+        clientes = [
+            c
+            for c in clientes
+            if q_norm in normalizar_alias(c.alias) or q_norm in c.telefono.lower()
+        ]
+    # Orden descendente por id para estabilidad (UUIDs son lexicograficos).
+    clientes.sort(key=lambda c: c.id, reverse=True)
+    return clientes[offset : offset + limit]
+
+
 def buscar_clientes(q: str, limit: int = 10) -> list[DynamoCliente]:
     try:
         from boto3.dynamodb.conditions import Attr

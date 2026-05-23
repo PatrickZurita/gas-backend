@@ -26,6 +26,21 @@ TIPO_INICIO_DIA = "INICIO_DIA"
 TIPO_ENTRADA = "ENTRADA"
 TIPO_SALIDA_PEDIDO = "SALIDA_PEDIDO"
 TIPO_AJUSTE = "AJUSTE"
+TIPO_REVERSA_ANULACION = "REVERSA_ANULACION"
+
+
+def _bucket_vacio() -> dict:
+    return {
+        "salidas": 0,
+        "entradas": 0,
+        "reversas": 0,
+        "ajustes": 0,
+        "stock_disponible": 0,
+    }
+
+
+def _bucket_por_peso_vacio() -> dict:
+    return {"10kg": _bucket_vacio(), "45kg": _bucket_vacio()}
 
 
 def _require_db(db: "Session | None") -> "Session":
@@ -251,6 +266,7 @@ def registrar_salida_por_pedido(
     pedido_id: int | str,
     marca_balon: str | None = None,
     tipo_balon: str | None = None,
+    peso_balon_kg: int | None = None,
 ) -> None:
     """Side-effect best-effort: si la jornada existe y no esta cerrada,
     registra una salida. No falla el pedido si la jornada no existe."""
@@ -276,6 +292,7 @@ def registrar_salida_por_pedido(
             stock_resultante=resultante,
             pedido_id=str(pedido_id),
             observacion="Salida por pedido",
+            peso_balon_kg=peso_balon_kg,
         )
         del marca_balon, tipo_balon  # no se persisten en DDB MVP
         return
@@ -290,6 +307,7 @@ def registrar_salida_por_pedido(
         pedido_id=pedido_id,
         marca_balon=marca_balon,
         tipo_balon=tipo_balon,
+        peso_balon_kg=peso_balon_kg,
     )
 
 
@@ -318,12 +336,36 @@ def _ddb_resumen(fecha: date_cls) -> StockResumenOut:
             stock_actual=None,
             stock_final_fisico=None,
             cerrado=False,
+            por_peso=_bucket_por_peso_vacio(),
         )
 
     movs = ddb_movs.listar_movimientos_por_fecha(fecha.isoformat())
     entradas = sum(m.cantidad_delta for m in movs if m.tipo == TIPO_ENTRADA)
-    salidas = -sum(m.cantidad_delta for m in movs if m.tipo == TIPO_SALIDA_PEDIDO)
+    # salidas neto: reversas (+N) cancelan SALIDA_PEDIDO (-N).
+    salidas = -sum(
+        m.cantidad_delta
+        for m in movs
+        if m.tipo in (TIPO_SALIDA_PEDIDO, TIPO_REVERSA_ANULACION)
+    )
     ajustes = sum(m.cantidad_delta for m in movs if m.tipo == TIPO_AJUSTE)
+
+    por_peso = _bucket_por_peso_vacio()
+    por_peso["10kg"]["stock_disponible"] = jornada.stock_inicial
+    for m in movs:
+        bucket_key = "45kg" if (m.peso_balon_kg or 10) == 45 else "10kg"
+        bucket = por_peso[bucket_key]
+        if m.tipo == TIPO_ENTRADA:
+            bucket["entradas"] += m.cantidad_delta
+            bucket["stock_disponible"] += m.cantidad_delta
+        elif m.tipo == TIPO_SALIDA_PEDIDO:
+            bucket["salidas"] += -m.cantidad_delta
+            bucket["stock_disponible"] += m.cantidad_delta
+        elif m.tipo == TIPO_REVERSA_ANULACION:
+            bucket["reversas"] += m.cantidad_delta
+            bucket["stock_disponible"] += m.cantidad_delta
+        elif m.tipo == TIPO_AJUSTE:
+            bucket["ajustes"] += m.cantidad_delta
+            bucket["stock_disponible"] += m.cantidad_delta
 
     return StockResumenOut(
         fecha=fecha,
@@ -335,6 +377,7 @@ def _ddb_resumen(fecha: date_cls) -> StockResumenOut:
         stock_actual=jornada.stock_actual,
         stock_final_fisico=None,
         cerrado=jornada.cerrado,
+        por_peso=por_peso,
     )
 
 
@@ -359,6 +402,7 @@ def _ddb_listar_movimientos_out(fecha: date_cls) -> list[MovimientoStockOut]:
                 pedido_id=m.pedido_id,
                 observacion=None,
                 created_at=created_at,
+                peso_balon_kg=m.peso_balon_kg,
             )
         )
     return out

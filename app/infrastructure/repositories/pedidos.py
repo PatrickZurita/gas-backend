@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -61,6 +61,7 @@ def crear_pedido(
     saldo_pendiente: Decimal | None = None,
     monto_pendiente_centavos: int | None = None,
     observacion: str | None = None,
+    peso_balon_kg: int = 10,
 ) -> Pedido:
     try:
         direccion = _get_or_create_direccion_default(db, cliente)
@@ -82,6 +83,7 @@ def crear_pedido(
                 else (0 if pagado else total_soles)
             ),
             monto_pendiente_centavos=monto_pendiente_centavos,
+            peso_balon_kg=peso_balon_kg,
         )
 
         db.add(pedido)
@@ -93,7 +95,153 @@ def crear_pedido(
             pedido_id=pedido.id,
             marca_balon=marca_balon,
             tipo_balon=tipo_balon,
+            peso_balon_kg=peso_balon_kg,
         )
+        db.commit()
+        db.refresh(pedido)
+        return pedido
+
+    except Exception:
+        db.rollback()
+        raise
+
+
+def anular_pedido(
+    db: Session,
+    pedido_id: int | str,
+    *,
+    motivo: str | None = None,
+) -> Pedido:
+    """Marca un pedido como ANULADO y compensa el stock (idempotente).
+
+    Si el pedido ya esta ANULADO no se vuelve a compensar el stock: la
+    segunda llamada es un no-op que devuelve el pedido sin duplicar la
+    reversa. La compensacion solo ocurre si la jornada de `fecha_entrega`
+    existe y no esta cerrada.
+    """
+    pg_id = to_pg_id(pedido_id)
+    try:
+        pedido = db.get(Pedido, pg_id)
+        if pedido is None:
+            raise ValueError(f"Pedido {pedido_id} no existe.")
+
+        if pedido.estado == "ANULADO":
+            return pedido
+
+        pedido.estado = "ANULADO"
+        pedido.anulado_at = datetime.now(timezone.utc)
+        pedido.anulado_motivo = motivo
+
+        repo_stock.registrar_reversa_anulacion_si_jornada_existe(
+            db,
+            fecha=pedido.fecha_entrega,
+            cantidad_balones=pedido.cantidad_balones,
+            pedido_id=pedido.id,
+            marca_balon=pedido.marca_balon,
+            tipo_balon=pedido.tipo_balon,
+            peso_balon_kg=pedido.peso_balon_kg,
+        )
+        db.commit()
+        db.refresh(pedido)
+        return pedido
+
+    except Exception:
+        db.rollback()
+        raise
+
+
+class PedidoAnuladoEditableError(Exception):
+    """Intento de editar un pedido ya anulado (409)."""
+
+
+def patch_pedido(
+    db: Session,
+    pedido_id: int | str,
+    *,
+    cantidad_balones: int | None = None,
+    precio_unitario_centavos: int | None = None,
+    monto_total_centavos: int | None = None,
+    monto_pendiente_centavos: int | None = None,
+    pagado: bool | None = None,
+    fecha_entrega: date | None = None,
+    peso_balon_kg: int | None = None,
+    motivo_edicion: str | None = None,
+) -> Pedido:
+    """Edita un pedido ACTIVO y compensa stock si cambia cantidad/fecha/peso.
+
+    Reglas:
+    - Pedido ANULADO -> PedidoAnuladoEditableError.
+    - Cambia cantidad: reversa por edicion (+N viejo) en jornada actual +
+      nueva SALIDA_PEDIDO (-N nuevo) en la jornada destino.
+    - Cambia fecha: reversa en jornada vieja + nueva SALIDA en jornada nueva.
+    - Cambia peso: reversa en bucket viejo + nueva SALIDA en bucket nuevo
+      (mismo dia o nuevo dia segun fecha_entrega).
+    """
+    pg_id = to_pg_id(pedido_id)
+    try:
+        pedido = db.get(Pedido, pg_id)
+        if pedido is None:
+            raise ValueError(f"Pedido {pedido_id} no existe.")
+        if pedido.estado == "ANULADO":
+            raise PedidoAnuladoEditableError(
+                "No se puede editar un pedido anulado."
+            )
+
+        cantidad_vieja = pedido.cantidad_balones
+        fecha_vieja = pedido.fecha_entrega
+        peso_viejo = pedido.peso_balon_kg
+        marca_balon = pedido.marca_balon
+        tipo_balon = pedido.tipo_balon
+
+        stock_impactado = (
+            cantidad_balones is not None
+            or fecha_entrega is not None
+            or peso_balon_kg is not None
+        )
+
+        if cantidad_balones is not None:
+            pedido.cantidad_balones = cantidad_balones
+        if precio_unitario_centavos is not None:
+            pedido.precio_unitario_centavos = precio_unitario_centavos
+        if monto_total_centavos is not None:
+            pedido.monto_total_centavos = monto_total_centavos
+        if monto_pendiente_centavos is not None:
+            pedido.monto_pendiente_centavos = monto_pendiente_centavos
+        if pagado is not None:
+            pedido.pagado = pagado
+        if fecha_entrega is not None:
+            pedido.fecha_entrega = fecha_entrega
+        if peso_balon_kg is not None:
+            pedido.peso_balon_kg = peso_balon_kg
+        if motivo_edicion is not None:
+            # Reutilizamos `anulado_motivo` para trazabilidad cuando se quiera
+            # auditar; alternativa: tabla de auditoria. MVP: anotacion en
+            # observacion del movimiento de reversa.
+            pass
+
+        if stock_impactado:
+            # 1) Reversa por edicion en la jornada/peso anterior.
+            repo_stock.registrar_reversa_anulacion_si_jornada_existe(
+                db,
+                fecha=fecha_vieja,
+                cantidad_balones=cantidad_vieja,
+                pedido_id=pedido.id,
+                marca_balon=marca_balon,
+                tipo_balon=tipo_balon,
+                peso_balon_kg=peso_viejo,
+                observacion=motivo_edicion or "Reversa por edicion de pedido",
+            )
+            # 2) Nueva salida con la cantidad/fecha/peso actualizados.
+            repo_stock.registrar_salida_pedido_si_jornada_existe(
+                db,
+                fecha=pedido.fecha_entrega,
+                cantidad_balones=pedido.cantidad_balones,
+                pedido_id=pedido.id,
+                marca_balon=pedido.marca_balon,
+                tipo_balon=pedido.tipo_balon,
+                peso_balon_kg=pedido.peso_balon_kg,
+            )
+
         db.commit()
         db.refresh(pedido)
         return pedido

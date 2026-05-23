@@ -23,6 +23,21 @@ def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
 
 
 @router.get(
+    "", response_model=list[ClienteOut], status_code=status.HTTP_200_OK
+)
+def listar_catalogo_clientes(
+    db: DbSession,
+    q: str | None = Query(default=None, max_length=100),
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[ClienteOut]:
+    q_clean = q.strip() if q else None
+    return service_clientes.listar_catalogo_clientes(
+        db, q=q_clean or None, limit=limit, offset=offset
+    )
+
+
+@router.get(
     "/search", response_model=list[ClienteOut], status_code=status.HTTP_200_OK
 )
 def search_clientes(

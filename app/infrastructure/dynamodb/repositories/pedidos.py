@@ -42,6 +42,10 @@ class DynamoPedido:
     marca_balon: str
     precio_unitario_centavos: int | None
     created_at: str
+    estado: str = "ACTIVO"
+    anulado_at: str | None = None
+    anulado_motivo: str | None = None
+    peso_balon_kg: int = 10
 
 
 def crear_pedido(
@@ -55,11 +59,14 @@ def crear_pedido(
     tipo_balon: str = "NORMAL",
     marca_balon: str = "PETROPERU",
     precio_unitario_centavos: int | None = None,
+    peso_balon_kg: int = 10,
 ) -> DynamoPedido:
     if cantidad_balones <= 0:
         raise ValueError("cantidad_balones debe ser positivo.")
     if total_centavos < 0 or pagado_centavos < 0:
         raise ValueError("Montos no pueden ser negativos.")
+    if peso_balon_kg not in (10, 45):
+        raise ValueError("peso_balon_kg debe ser 10 o 45.")
 
     pendiente_centavos = max(0, total_centavos - pagado_centavos)
     pagado = pendiente_centavos == 0
@@ -78,6 +85,8 @@ def crear_pedido(
         "pagado": pagado,
         "tipo_balon": tipo_balon,
         "marca_balon": marca_balon,
+        "estado": "ACTIVO",
+        "peso_balon_kg": int(peso_balon_kg),
         "created_at": now,
         "updated_at": now,
     }
@@ -90,6 +99,92 @@ def crear_pedido(
         ConditionExpression="attribute_not_exists(pedido_id)",
     )
     return _pedido_from_item(item)
+
+
+def obtener_pedido(pedido_id: str) -> DynamoPedido | None:
+    table = get_table(get_dynamodb_tables().pedidos)
+    response = table.get_item(Key={"pedido_id": pedido_id})
+    item = response.get("Item")
+    return _pedido_from_item(item) if item else None
+
+
+def anular_pedido(pedido_id: str, motivo: str | None = None) -> DynamoPedido | None:
+    """Marca el pedido como ANULADO en DynamoDB (idempotente).
+
+    Devuelve el pedido actualizado, o `None` si no existe. Si ya estaba
+    ANULADO, devuelve el item sin volver a tocarlo: la compensacion de
+    stock no se duplica.
+    """
+    actual = obtener_pedido(pedido_id)
+    if actual is None:
+        return None
+    if actual.estado == "ANULADO":
+        return actual
+
+    table = get_table(get_dynamodb_tables().pedidos)
+    now = datetime.now(UTC).isoformat()
+    response = table.update_item(
+        Key={"pedido_id": pedido_id},
+        UpdateExpression=(
+            "SET estado = :anulado, anulado_at = :now, "
+            "anulado_motivo = :motivo, updated_at = :now"
+        ),
+        ExpressionAttributeValues={
+            ":anulado": "ANULADO",
+            ":now": now,
+            ":motivo": motivo,
+        },
+        ConditionExpression="attribute_exists(pedido_id)",
+        ReturnValues="ALL_NEW",
+    )
+    updated = response.get("Attributes")
+    return _pedido_from_item(updated) if updated else None
+
+
+def patch_pedido(pedido_id: str, **fields: Any) -> DynamoPedido | None:
+    """Actualiza campos del pedido en DynamoDB.
+
+    Solo se aplican los `fields` provistos. Devuelve `None` si el pedido
+    no existe. El llamador es responsable de la compensacion de stock.
+    """
+    if not fields:
+        return obtener_pedido(pedido_id)
+
+    actual = obtener_pedido(pedido_id)
+    if actual is None:
+        return None
+
+    # Recalcular pendiente/pagado si vienen total o pagado_centavos.
+    if "total_centavos" in fields or "pagado_centavos" in fields:
+        total = fields.get("total_centavos", actual.total_centavos)
+        pagado_c = fields.get("pagado_centavos", actual.pagado_centavos)
+        fields["pendiente_centavos"] = max(0, int(total) - int(pagado_c))
+        fields["pagado"] = fields["pendiente_centavos"] == 0
+
+    fields["updated_at"] = datetime.now(UTC).isoformat()
+
+    set_parts: list[str] = []
+    values: dict[str, Any] = {}
+    names: dict[str, str] = {}
+    for i, (key, value) in enumerate(fields.items()):
+        placeholder = f":v{i}"
+        # `estado` es palabra clave en DynamoDB ⇒ usar alias #attr.
+        attr_name = f"#k{i}"
+        set_parts.append(f"{attr_name} = {placeholder}")
+        names[attr_name] = key
+        values[placeholder] = value
+
+    table = get_table(get_dynamodb_tables().pedidos)
+    response = table.update_item(
+        Key={"pedido_id": pedido_id},
+        UpdateExpression="SET " + ", ".join(set_parts),
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+        ConditionExpression="attribute_exists(pedido_id)",
+        ReturnValues="ALL_NEW",
+    )
+    updated = response.get("Attributes")
+    return _pedido_from_item(updated) if updated else None
 
 
 def listar_pedidos_por_cliente(cliente_id: str, limit: int = 50) -> list[DynamoPedido]:
@@ -117,7 +212,11 @@ def listar_pedidos_por_fecha(fecha_entrega: str, limit: int = 200) -> list[Dynam
         FilterExpression=Attr("fecha_entrega").eq(fecha_entrega),
         Limit=limit,
     )
-    return [_pedido_from_item(item) for item in response.get("Items", [])]
+    # Exclusion de anulados en backend (lectura defensiva): el filtro se hace
+    # en Python para no requerir AND en FilterExpression. `estado` faltante se
+    # interpreta como ACTIVO. Los reportes no deben contar pedidos ANULADO.
+    pedidos = [_pedido_from_item(item) for item in response.get("Items", [])]
+    return [p for p in pedidos if p.estado != "ANULADO"]
 
 
 def _pedido_from_item(item: dict[str, Any]) -> DynamoPedido:
@@ -136,6 +235,17 @@ def _pedido_from_item(item: dict[str, Any]) -> DynamoPedido:
         marca_balon=str(item.get("marca_balon", "PETROPERU")),
         precio_unitario_centavos=_to_int(precio) if precio is not None else None,
         created_at=str(item.get("created_at", "")),
+        estado=str(item.get("estado", "ACTIVO")),
+        anulado_at=(
+            str(item["anulado_at"]) if item.get("anulado_at") is not None else None
+        ),
+        anulado_motivo=(
+            str(item["anulado_motivo"])
+            if item.get("anulado_motivo") is not None
+            else None
+        ),
+        # Lectura defensiva legacy: pedido sin peso → 10 kg.
+        peso_balon_kg=_to_int(item.get("peso_balon_kg", 10)) or 10,
     )
 
 

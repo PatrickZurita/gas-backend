@@ -22,6 +22,21 @@ def crear_cliente(db: Session, alias: str, telefono: str) -> Cliente:
     db.refresh(cliente)
     return cliente
 
+def listar_catalogo(
+    db: Session,
+    *,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> list[Cliente]:
+    stmt = select(Cliente)
+    if q:
+        like = f"%{q.strip()}%"
+        stmt = stmt.where(Cliente.alias.ilike(like) | Cliente.telefono.ilike(like))
+    stmt = stmt.order_by(Cliente.id.desc()).offset(offset).limit(limit)
+    return list(db.execute(stmt).scalars().all())
+
+
 def buscar_clientes(db: Session, q: str, limit: int = 10) -> list[Cliente]:
     q = q.strip()
     stmt = (

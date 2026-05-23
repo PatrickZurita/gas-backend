@@ -80,6 +80,13 @@ def test_stock_resumen_hoy_sin_jornada_devuelve_no_iniciado(client):
     response = client.get("/stock/dia", params={"fecha": "2026-01-16"})
 
     assert response.status_code == 200
+    bucket_vacio = {
+        "salidas": 0,
+        "entradas": 0,
+        "reversas": 0,
+        "ajustes": 0,
+        "stock_disponible": 0,
+    }
     assert response.json() == {
         "fecha": "2026-01-16",
         "stock_iniciado": False,
@@ -90,6 +97,7 @@ def test_stock_resumen_hoy_sin_jornada_devuelve_no_iniciado(client):
         "stock_actual": None,
         "stock_final_fisico": None,
         "cerrado": False,
+        "por_peso": {"10kg": bucket_vacio, "45kg": bucket_vacio},
         "movimientos": [],
     }
 

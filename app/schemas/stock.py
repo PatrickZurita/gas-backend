@@ -29,9 +29,35 @@ class MovimientoStockOut(BaseModel):
     pedido_id: int | str | None
     observacion: str | None
     created_at: datetime
+    peso_balon_kg: int | None = None
 
     class Config:
         from_attributes = True
+
+
+class StockPorPesoOut(BaseModel):
+    salidas: int = 0
+    entradas: int = 0
+    reversas: int = 0
+    ajustes: int = 0
+    stock_disponible: int = 0
+
+
+class StockPorPesoBloqueOut(BaseModel):
+    """Bloque informativo de stock segregado por peso 10kg / 45kg.
+
+    `stock_disponible` parte del stock_inicial global (legado, sin peso) +
+    movimientos de cada peso. Movimientos legacy sin `peso_balon_kg` van
+    al bucket `10kg`.
+    """
+
+    diez_kg: StockPorPesoOut = Field(default_factory=StockPorPesoOut, alias="10kg")
+    cuarenta_y_cinco_kg: StockPorPesoOut = Field(
+        default_factory=StockPorPesoOut, alias="45kg"
+    )
+
+    class Config:
+        populate_by_name = True
 
 
 class StockResumenOut(BaseModel):
@@ -44,6 +70,7 @@ class StockResumenOut(BaseModel):
     stock_actual: int | None = None
     stock_final_fisico: int | None = None
     cerrado: bool = False
+    por_peso: StockPorPesoBloqueOut | None = None
 
 
 class StockDiaOut(StockResumenOut):

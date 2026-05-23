@@ -18,7 +18,9 @@ from app.infrastructure.dynamodb.client import get_table
 from app.infrastructure.dynamodb.config import get_dynamodb_tables
 from app.infrastructure.dynamodb.id_generation import generate_id
 
-TIPOS_VALIDOS = frozenset({"INICIO_DIA", "ENTRADA", "SALIDA_PEDIDO", "AJUSTE"})
+TIPOS_VALIDOS = frozenset(
+    {"INICIO_DIA", "ENTRADA", "SALIDA_PEDIDO", "AJUSTE", "REVERSA_ANULACION"}
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ class DynamoMovimientoStock:
     cantidad_delta: int
     stock_resultante: int
     pedido_id: str | None
+    peso_balon_kg: int = 10
 
 
 def registrar_movimiento(
@@ -39,11 +42,15 @@ def registrar_movimiento(
     stock_resultante: int,
     pedido_id: str | None = None,
     observacion: str | None = None,
+    peso_balon_kg: int | None = None,
 ) -> DynamoMovimientoStock:
     if tipo not in TIPOS_VALIDOS:
         raise ValueError(f"Tipo invalido: {tipo}")
-    if stock_resultante < 0:
-        raise ValueError("stock_resultante no puede ser negativo.")
+    # V2.3: el stock_resultante puede ser negativo en MVP (igual que PostgreSQL,
+    # que no bloquea pedidos sin stock). DynamoDB ya bloquea via aplicar_delta
+    # antes de llegar aqui; este chequeo se relaja para no romper compensaciones.
+    if stock_resultante < 0 and tipo == "INICIO_DIA":
+        raise ValueError("stock_resultante no puede ser negativo en INICIO_DIA.")
 
     mov_id = generate_id()
     now = datetime.now(UTC).isoformat()
@@ -59,6 +66,8 @@ def registrar_movimiento(
         item["pedido_id"] = pedido_id
     if observacion is not None:
         item["observacion"] = observacion
+    if peso_balon_kg is not None:
+        item["peso_balon_kg"] = int(peso_balon_kg)
 
     table = get_table(get_dynamodb_tables().movimientos_stock)
     table.put_item(
@@ -84,6 +93,8 @@ def listar_movimientos_por_fecha(fecha: str, limit: int = 200) -> list[DynamoMov
 
 def _from_item(item: dict[str, Any]) -> DynamoMovimientoStock:
     pedido_id = item.get("pedido_id")
+    # Lectura defensiva: movimientos legacy sin peso → 10 kg.
+    peso = item.get("peso_balon_kg", 10)
     return DynamoMovimientoStock(
         id=str(item.get("movimiento_id", "")),
         fecha=str(item.get("fecha", "")),
@@ -91,4 +102,5 @@ def _from_item(item: dict[str, Any]) -> DynamoMovimientoStock:
         cantidad_delta=int(item.get("cantidad_delta", 0)),
         stock_resultante=int(item.get("stock_resultante", 0)),
         pedido_id=str(pedido_id) if pedido_id is not None else None,
+        peso_balon_kg=int(peso) if peso is not None else 10,
     )

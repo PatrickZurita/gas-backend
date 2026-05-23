@@ -23,6 +23,7 @@ class PedidoReporteRow(TypedDict):
     pagado: bool
     fecha_entrega: date
     created_at: datetime
+    peso_balon_kg: int
 
 
 def _soles_a_centavos(monto_soles: Decimal) -> int:
@@ -59,6 +60,7 @@ def _pedido_to_reporte_row(pedido: Pedido, cliente_alias: str) -> PedidoReporteR
         "pagado": pedido.pagado,
         "fecha_entrega": pedido.fecha_entrega,
         "created_at": pedido.created_at,
+        "peso_balon_kg": pedido.peso_balon_kg or 10,
     }
 
 
@@ -69,7 +71,10 @@ def listar_pedidos_por_fecha(
     stmt = (
         select(Pedido, Cliente.alias)
         .join(Cliente, Pedido.cliente_id == Cliente.id)
-        .where(Pedido.fecha_entrega == fecha_entrega)
+        .where(
+            Pedido.fecha_entrega == fecha_entrega,
+            Pedido.estado == "ACTIVO",
+        )
         .order_by(Pedido.created_at.desc(), Pedido.id.desc())
     )
 
@@ -79,11 +84,37 @@ def listar_pedidos_por_fecha(
     ]
 
 
+def listar_pedidos_por_rango(
+    db: Session,
+    *,
+    desde: date,
+    hasta: date,
+) -> list[Pedido]:
+    """Devuelve pedidos ACTIVOS entre `desde` y `hasta` (inclusive).
+
+    Usado por reportes V4 (semana/mes). El indice
+    `ix_pedidos_fecha_entrega` cubre este filtro.
+    """
+    stmt = (
+        select(Pedido)
+        .where(
+            Pedido.fecha_entrega >= desde,
+            Pedido.fecha_entrega <= hasta,
+            Pedido.estado == "ACTIVO",
+        )
+        .order_by(Pedido.fecha_entrega.asc(), Pedido.id.asc())
+    )
+    return list(db.execute(stmt).scalars().all())
+
+
 def listar_pedidos_con_deuda(db: Session) -> list[PedidoReporteRow]:
     stmt = (
         select(Pedido, Cliente.alias)
         .join(Cliente, Pedido.cliente_id == Cliente.id)
-        .where(Pedido.saldo_pendiente > 0)
+        .where(
+            Pedido.saldo_pendiente > 0,
+            Pedido.estado == "ACTIVO",
+        )
         .order_by(
             Pedido.fecha_entrega.desc(),
             Pedido.created_at.desc(),
