@@ -6,6 +6,9 @@
 app = 'gas-backend-mvp'
 primary_region = 'gru'
 
+[deploy]
+  release_command = "alembic upgrade head"
+
 [build]
 
 [env]

@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
-# Startup para Fly.io. Hace migraciones Alembic solo si hay DATABASE_URL.
-# Si no hay Postgres conectado, igual arranca uvicorn para que `/health`
-# responda (los endpoints que dependen de DB devolveran 500 hasta que se
-# attachee una base).
+# Startup para Fly.io.
+# Las migraciones Alembic corren en release_command (fly.toml) ANTES de
+# que este contenedor reciba trafico. No repetir aqui: un fallo de migracion
+# cancela el deploy sin downtime y el app viejo sigue sirviendo.
 set -euo pipefail
-
-if [[ -n "${DATABASE_URL:-}" ]]; then
-  echo "[start-fly] DATABASE_URL presente, aplicando migraciones alembic..."
-  alembic upgrade head
-else
-  echo "[start-fly] DATABASE_URL ausente; salto migraciones. Solo /health funcionara."
-fi
 
 echo "[start-fly] arrancando uvicorn en 0.0.0.0:${PORT:-8080}"
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8080}" --workers 1
