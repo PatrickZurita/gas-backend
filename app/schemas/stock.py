@@ -1,6 +1,14 @@
 from datetime import date, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+PESOS_BALON_VALIDOS = {10, 45}
+
+
+def _validar_peso_opcional(value: int | None) -> int | None:
+    if value is not None and value not in PESOS_BALON_VALIDOS:
+        raise ValueError("peso_balon_kg debe ser 10 o 45")
+    return value
 
 
 class StockIniciarDiaIn(BaseModel):
@@ -13,12 +21,24 @@ class StockEntradaIn(BaseModel):
     fecha: date | None = None
     cantidad: int = Field(gt=0)
     observacion: str | None = Field(default=None, max_length=250)
+    peso_balon_kg: int | None = None
+
+    @field_validator("peso_balon_kg")
+    @classmethod
+    def _check_peso(cls, value: int | None) -> int | None:
+        return _validar_peso_opcional(value)
 
 
 class StockAjusteIn(BaseModel):
     fecha: date | None = None
     stock_fisico: int = Field(ge=0)
     observacion: str | None = Field(default=None, max_length=250)
+    peso_balon_kg: int | None = None
+
+    @field_validator("peso_balon_kg")
+    @classmethod
+    def _check_peso(cls, value: int | None) -> int | None:
+        return _validar_peso_opcional(value)
 
 
 class MovimientoStockOut(BaseModel):

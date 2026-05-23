@@ -64,6 +64,7 @@ def registrar_entrada(
     jornada: StockJornada,
     cantidad: int,
     observacion: str | None = None,
+    peso_balon_kg: int | None = None,
 ) -> MovimientoStock:
     jornada.stock_actual += cantidad
     movimiento = MovimientoStock(
@@ -73,6 +74,7 @@ def registrar_entrada(
         cantidad_delta=cantidad,
         stock_resultante=jornada.stock_actual,
         observacion=observacion,
+        peso_balon_kg=peso_balon_kg,
     )
     db.add(movimiento)
     db.commit()
@@ -86,13 +88,31 @@ def registrar_ajuste_a_stock_fisico(
     jornada: StockJornada,
     stock_fisico: int,
     observacion: str | None = None,
+    peso_balon_kg: int | None = None,
 ) -> MovimientoStock | None:
-    delta = stock_fisico - jornada.stock_actual
+    """Si `peso_balon_kg` se provee, `stock_fisico` es el objetivo de ese
+    peso. El delta se calcula contra el stock por peso derivado de movimientos
+    y se aplica al global. El MovimientoStock lleva el peso para que el
+    resumen por peso lo bucketize correcto.
+    """
+    if peso_balon_kg is None:
+        delta = stock_fisico - jornada.stock_actual
+    else:
+        movimientos = listar_movimientos(db, jornada.id)
+        por_peso = construir_resumen_por_peso(
+            jornada.stock_inicial, movimientos
+        )
+        bucket = "45kg" if peso_balon_kg == 45 else "10kg"
+        disponible_actual = por_peso[bucket]["stock_disponible"]
+        delta = stock_fisico - disponible_actual
+
     if delta == 0:
         return None
 
-    jornada.stock_actual = stock_fisico
-    jornada.stock_final_fisico = stock_fisico
+    jornada.stock_actual = jornada.stock_actual + delta
+    if peso_balon_kg is None:
+        # legacy: el ajuste global tambien refleja el stock fisico cerrado
+        jornada.stock_final_fisico = stock_fisico
     movimiento = MovimientoStock(
         stock_jornada_id=jornada.id,
         fecha=jornada.fecha,
@@ -100,6 +120,7 @@ def registrar_ajuste_a_stock_fisico(
         cantidad_delta=delta,
         stock_resultante=jornada.stock_actual,
         observacion=observacion,
+        peso_balon_kg=peso_balon_kg,
     )
     db.add(movimiento)
     db.commit()

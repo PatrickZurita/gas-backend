@@ -65,6 +65,7 @@ def registrar_entrada(payload: StockEntradaIn, db: DbSession) -> StockOperacionO
             fecha=fecha,
             cantidad=payload.cantidad,
             observacion=payload.observacion,
+            peso_balon_kg=payload.peso_balon_kg,
         )
     except StockNoIniciadoError as exc:
         raise HTTPException(
@@ -85,6 +86,7 @@ def registrar_ajuste(payload: StockAjusteIn, db: DbSession) -> StockOperacionOut
             fecha=fecha,
             stock_fisico=payload.stock_fisico,
             observacion=payload.observacion,
+            peso_balon_kg=payload.peso_balon_kg,
         )
     except StockNoIniciadoError as exc:
         raise HTTPException(

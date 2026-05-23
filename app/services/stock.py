@@ -143,6 +143,7 @@ def registrar_entrada(
     fecha: date_cls,
     cantidad: int,
     observacion: str | None,
+    peso_balon_kg: int | None = None,
 ) -> StockOperacionOut:
     if is_dynamodb_enabled():
         from app.infrastructure.dynamodb.repositories import (
@@ -165,6 +166,7 @@ def registrar_entrada(
             cantidad_delta=cantidad,
             stock_resultante=resultante,
             observacion=observacion,
+            peso_balon_kg=peso_balon_kg,
         )
         return StockOperacionOut(
             fecha=fecha,
@@ -184,7 +186,11 @@ def registrar_entrada(
         raise StockCerradoError("El stock del dia esta cerrado.")
 
     movimiento = repo_stock.registrar_entrada(
-        session, jornada=jornada, cantidad=cantidad, observacion=observacion
+        session,
+        jornada=jornada,
+        cantidad=cantidad,
+        observacion=observacion,
+        peso_balon_kg=peso_balon_kg,
     )
     return StockOperacionOut(
         fecha=fecha,
@@ -201,7 +207,14 @@ def registrar_ajuste(
     fecha: date_cls,
     stock_fisico: int,
     observacion: str | None,
+    peso_balon_kg: int | None = None,
 ) -> StockOperacionOut:
+    """Si `peso_balon_kg` se provee, `stock_fisico` es el stock objetivo para
+    ese peso (10 o 45). El delta se calcula contra `por_peso[peso].stock_disponible`
+    y se aplica tanto al global como al bucket del peso indicado (via el
+    MovimientoStock que lleva `peso_balon_kg`).
+    Si `peso_balon_kg` es None, comportamiento legacy: ajusta el global.
+    """
     if is_dynamodb_enabled():
         from app.infrastructure.dynamodb.repositories import (
             movimientos_stock as ddb_movs,
@@ -216,21 +229,34 @@ def registrar_ajuste(
         if jornada.cerrado:
             raise StockCerradoError("El stock del dia esta cerrado.")
 
-        delta = stock_fisico - jornada.stock_actual
+        if peso_balon_kg is None:
+            delta = stock_fisico - jornada.stock_actual
+            stock_resultante = stock_fisico
+        else:
+            resumen_actual = _ddb_resumen(fecha)
+            por_peso = resumen_actual.por_peso
+            if peso_balon_kg == 45:
+                disponible_actual = por_peso.cuarenta_y_cinco_kg.stock_disponible
+            else:
+                disponible_actual = por_peso.diez_kg.stock_disponible
+            delta = stock_fisico - disponible_actual
+            stock_resultante = jornada.stock_actual + delta
+
         if delta != 0:
             ddb_jornadas.aplicar_delta(fecha.isoformat(), delta)
             ddb_movs.registrar_movimiento(
                 fecha=fecha.isoformat(),
                 tipo=TIPO_AJUSTE,
                 cantidad_delta=delta,
-                stock_resultante=stock_fisico,
+                stock_resultante=stock_resultante,
                 observacion=observacion,
+                peso_balon_kg=peso_balon_kg,
             )
         return StockOperacionOut(
             fecha=fecha,
             tipo=TIPO_AJUSTE,
             cantidad_delta=delta,
-            stock_actual=stock_fisico,
+            stock_actual=stock_resultante,
             observacion=observacion,
         )
 
@@ -248,12 +274,13 @@ def registrar_ajuste(
         jornada=jornada,
         stock_fisico=stock_fisico,
         observacion=observacion,
+        peso_balon_kg=peso_balon_kg,
     )
     return StockOperacionOut(
         fecha=fecha,
         tipo=TIPO_AJUSTE,
         cantidad_delta=0 if movimiento is None else movimiento.cantidad_delta,
-        stock_actual=stock_fisico,
+        stock_actual=jornada.stock_actual,
         observacion=observacion,
     )
 
