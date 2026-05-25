@@ -19,6 +19,24 @@ def obtener_jornada_por_fecha(db: Session, fecha: date) -> StockJornada | None:
     return db.execute(stmt).scalars().first()
 
 
+def obtener_ultima_jornada_anterior(
+    db: Session, fecha: date
+) -> StockJornada | None:
+    """Devuelve la jornada con fecha mas reciente estrictamente anterior a `fecha`.
+
+    Usado por el flujo de continuar-de-ayer: permite traer el stock final
+    del ultimo dia trabajado aunque no sea exactamente el dia anterior
+    (ej. lunes despues de fin de semana sin operacion).
+    """
+    stmt = (
+        select(StockJornada)
+        .where(StockJornada.fecha < fecha)
+        .order_by(StockJornada.fecha.desc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalars().first()
+
+
 def listar_movimientos(db: Session, jornada_id: int) -> list[MovimientoStock]:
     stmt = (
         select(MovimientoStock)

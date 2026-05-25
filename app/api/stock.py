@@ -6,6 +6,7 @@ from app.api.deps import DbSession
 from app.core.time import fecha_hoy_lima
 from app.schemas.stock import (
     StockAjusteIn,
+    StockContinuarPreviewOut,
     StockDiaOut,
     StockEntradaIn,
     StockIniciarDiaIn,
@@ -53,6 +54,37 @@ def iniciar_dia(payload: StockIniciarDiaIn, db: DbSession) -> StockResumenOut:
     except StockYaIniciadoError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+
+@router.get("/preview-continuar", response_model=StockContinuarPreviewOut)
+def preview_continuar(db: DbSession) -> StockContinuarPreviewOut:
+    """Devuelve si existe una jornada anterior con stock disponible
+    para arrastrar al dia actual. Usado por el frontend antes de
+    ofrecer el carry-over al usuario.
+    """
+    return service_stock.preview_continuar_dia(db, fecha=fecha_hoy_lima())
+
+
+@router.post(
+    "/continuar-de-ayer",
+    response_model=StockResumenOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def continuar_de_ayer(db: DbSession) -> StockResumenOut:
+    """Crea la jornada de hoy arrastrando el stock por peso de la
+    ultima jornada anterior. Evita que el usuario tenga que recontar
+    fisicamente el stock cada manana.
+    """
+    try:
+        return service_stock.continuar_de_ayer(db, fecha=fecha_hoy_lima())
+    except StockYaIniciadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except StockNoIniciadoError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
 
 

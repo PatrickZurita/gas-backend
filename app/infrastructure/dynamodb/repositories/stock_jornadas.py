@@ -53,6 +53,23 @@ def obtener_jornada(fecha: str) -> DynamoStockJornada | None:
     return _from_item(item) if item else None
 
 
+def listar_jornadas_anteriores(fecha: str) -> list[DynamoStockJornada]:
+    """Lista todas las jornadas con fecha < `fecha`, ordenadas desc por fecha.
+
+    Volumen MVP: scan + filtro + sort en memoria. Para AWS produccion con
+    volumen alto, GSI por fecha o usar query con sort key invertido.
+    """
+    table = get_table(get_dynamodb_tables().stock_jornadas)
+    response = table.scan()
+    items: list[dict[str, Any]] = response.get("Items", [])
+    while response.get("LastEvaluatedKey"):
+        response = table.scan(ExclusiveStartKey=response["LastEvaluatedKey"])
+        items.extend(response.get("Items", []))
+    filtered = [item for item in items if str(item.get("fecha", "")) < fecha]
+    filtered.sort(key=lambda it: str(it.get("fecha", "")), reverse=True)
+    return [_from_item(it) for it in filtered]
+
+
 def aplicar_delta(fecha: str, delta: int) -> int:
     """Aplica un delta entero al `stock_actual` de la jornada y devuelve el resultado.
 

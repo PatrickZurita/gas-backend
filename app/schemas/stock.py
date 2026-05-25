@@ -103,3 +103,14 @@ class StockOperacionOut(BaseModel):
     cantidad_delta: int
     stock_actual: int
     observacion: str | None = None
+
+
+class StockContinuarPreviewOut(BaseModel):
+    """Vista previa del stock disponible para arrastrar de la ultima
+    jornada anterior (si existe).
+    """
+
+    puede_continuar: bool
+    fecha_origen: date | None = None
+    stock_10kg: int = 0
+    stock_45kg: int = 0

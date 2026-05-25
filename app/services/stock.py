@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from app.core.storage import is_dynamodb_enabled
 from app.schemas.stock import (
     MovimientoStockOut,
+    StockContinuarPreviewOut,
     StockDiaOut,
     StockOperacionOut,
     StockResumenOut,
@@ -283,6 +284,173 @@ def registrar_ajuste(
         stock_actual=jornada.stock_actual,
         observacion=observacion,
     )
+
+
+def preview_continuar_dia(
+    db: "Session | None", *, fecha: date_cls
+) -> StockContinuarPreviewOut:
+    """Si existe una jornada anterior con stock > 0, devuelve sus totales
+    por peso para que el cliente pueda confirmar el carry-over.
+    """
+    if is_dynamodb_enabled():
+        return _ddb_preview_continuar(fecha)
+
+    from app.infrastructure.repositories import stock as repo_stock
+
+    session = _require_db(db)
+    jornada_anterior = repo_stock.obtener_ultima_jornada_anterior(session, fecha)
+    if jornada_anterior is None:
+        return StockContinuarPreviewOut(puede_continuar=False)
+
+    movimientos = repo_stock.listar_movimientos(session, jornada_anterior.id)
+    por_peso = repo_stock.construir_resumen_por_peso(
+        jornada_anterior.stock_inicial, movimientos
+    )
+    stock_10 = max(0, por_peso["10kg"]["stock_disponible"])
+    stock_45 = max(0, por_peso["45kg"]["stock_disponible"])
+    return StockContinuarPreviewOut(
+        puede_continuar=(stock_10 + stock_45) > 0,
+        fecha_origen=jornada_anterior.fecha,
+        stock_10kg=stock_10,
+        stock_45kg=stock_45,
+    )
+
+
+def continuar_de_ayer(
+    db: "Session | None", *, fecha: date_cls
+) -> StockResumenOut:
+    """Crea la jornada de `fecha` arrastrando el stock por peso de la
+    ultima jornada anterior. El stock 10 kg va como stock_inicial (bucket
+    legacy 10 kg). El stock 45 kg se registra como ENTRADA con peso 45
+    inmediatamente despues, asi el resumen por peso queda correcto.
+    """
+    if is_dynamodb_enabled():
+        return _ddb_continuar_de_ayer(fecha)
+
+    from app.infrastructure.repositories import stock as repo_stock
+
+    session = _require_db(db)
+    if repo_stock.obtener_jornada_por_fecha(session, fecha) is not None:
+        raise StockYaIniciadoError("El stock del dia ya fue iniciado.")
+
+    jornada_anterior = repo_stock.obtener_ultima_jornada_anterior(session, fecha)
+    if jornada_anterior is None:
+        raise StockNoIniciadoError(
+            "No hay una jornada anterior para arrastrar el stock."
+        )
+
+    movimientos_prev = repo_stock.listar_movimientos(
+        session, jornada_anterior.id
+    )
+    por_peso = repo_stock.construir_resumen_por_peso(
+        jornada_anterior.stock_inicial, movimientos_prev
+    )
+    stock_10 = max(0, por_peso["10kg"]["stock_disponible"])
+    stock_45 = max(0, por_peso["45kg"]["stock_disponible"])
+
+    jornada = repo_stock.iniciar_dia(
+        session,
+        fecha=fecha,
+        stock_inicial=stock_10,
+        observacion=f"Continuado de {jornada_anterior.fecha.isoformat()}",
+    )
+    if stock_45 > 0:
+        repo_stock.registrar_entrada(
+            session,
+            jornada=jornada,
+            cantidad=stock_45,
+            observacion=f"Carry-over 45kg de {jornada_anterior.fecha.isoformat()}",
+            peso_balon_kg=45,
+        )
+
+    return StockResumenOut(**repo_stock.construir_resumen(session, fecha))
+
+
+def _ddb_preview_continuar(fecha: date_cls) -> StockContinuarPreviewOut:
+    from app.infrastructure.dynamodb.repositories import (
+        movimientos_stock as ddb_movs,
+    )
+    from app.infrastructure.dynamodb.repositories import (
+        stock_jornadas as ddb_jornadas,
+    )
+
+    todas = ddb_jornadas.listar_jornadas_anteriores(fecha.isoformat())
+    if not todas:
+        return StockContinuarPreviewOut(puede_continuar=False)
+    ultima = todas[0]
+    movs = ddb_movs.listar_movimientos_por_fecha(ultima.fecha)
+    stock_10 = ultima.stock_inicial
+    stock_45 = 0
+    for m in movs:
+        bucket_45 = (m.peso_balon_kg or 10) == 45
+        if m.tipo == TIPO_ENTRADA:
+            if bucket_45:
+                stock_45 += m.cantidad_delta
+            else:
+                stock_10 += m.cantidad_delta
+        elif m.tipo == TIPO_SALIDA_PEDIDO:
+            if bucket_45:
+                stock_45 += m.cantidad_delta
+            else:
+                stock_10 += m.cantidad_delta
+        elif m.tipo == TIPO_REVERSA_ANULACION:
+            if bucket_45:
+                stock_45 += m.cantidad_delta
+            else:
+                stock_10 += m.cantidad_delta
+        elif m.tipo == TIPO_AJUSTE:
+            if bucket_45:
+                stock_45 += m.cantidad_delta
+            else:
+                stock_10 += m.cantidad_delta
+    stock_10 = max(0, stock_10)
+    stock_45 = max(0, stock_45)
+    return StockContinuarPreviewOut(
+        puede_continuar=(stock_10 + stock_45) > 0,
+        fecha_origen=date_cls.fromisoformat(ultima.fecha),
+        stock_10kg=stock_10,
+        stock_45kg=stock_45,
+    )
+
+
+def _ddb_continuar_de_ayer(fecha: date_cls) -> StockResumenOut:
+    from app.infrastructure.dynamodb.repositories import (
+        movimientos_stock as ddb_movs,
+    )
+    from app.infrastructure.dynamodb.repositories import (
+        stock_jornadas as ddb_jornadas,
+    )
+
+    if ddb_jornadas.obtener_jornada(fecha.isoformat()) is not None:
+        raise StockYaIniciadoError("El stock del dia ya fue iniciado.")
+
+    preview = _ddb_preview_continuar(fecha)
+    if not preview.puede_continuar or preview.fecha_origen is None:
+        raise StockNoIniciadoError(
+            "No hay una jornada anterior para arrastrar el stock."
+        )
+
+    ddb_jornadas.abrir_jornada(fecha.isoformat(), preview.stock_10kg)
+    ddb_movs.registrar_movimiento(
+        fecha=fecha.isoformat(),
+        tipo=TIPO_INICIO_DIA,
+        cantidad_delta=preview.stock_10kg,
+        stock_resultante=preview.stock_10kg,
+        observacion=f"Continuado de {preview.fecha_origen.isoformat()}",
+    )
+    if preview.stock_45kg > 0:
+        resultante = ddb_jornadas.aplicar_delta(
+            fecha.isoformat(), preview.stock_45kg
+        )
+        ddb_movs.registrar_movimiento(
+            fecha=fecha.isoformat(),
+            tipo=TIPO_ENTRADA,
+            cantidad_delta=preview.stock_45kg,
+            stock_resultante=resultante,
+            observacion=f"Carry-over 45kg de {preview.fecha_origen.isoformat()}",
+            peso_balon_kg=45,
+        )
+    return _ddb_resumen(fecha)
 
 
 def registrar_salida_por_pedido(
