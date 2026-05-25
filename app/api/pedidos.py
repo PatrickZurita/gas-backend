@@ -66,6 +66,7 @@ def patch_pedido(
             pagado=payload.pagado,
             fecha_entrega=payload.fecha_entrega,
             peso_balon_kg=payload.peso_balon_kg,
+            metodo_pago=payload.metodo_pago,
             motivo_edicion=payload.motivo_edicion,
         )
     except PedidoNoExisteError as exc:

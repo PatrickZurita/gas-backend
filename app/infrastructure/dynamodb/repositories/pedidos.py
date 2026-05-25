@@ -46,6 +46,7 @@ class DynamoPedido:
     anulado_at: str | None = None
     anulado_motivo: str | None = None
     peso_balon_kg: int = 10
+    metodo_pago: str | None = None
 
 
 def crear_pedido(
@@ -60,6 +61,7 @@ def crear_pedido(
     marca_balon: str = "PETROPERU",
     precio_unitario_centavos: int | None = None,
     peso_balon_kg: int = 10,
+    metodo_pago: str | None = None,
 ) -> DynamoPedido:
     if cantidad_balones <= 0:
         raise ValueError("cantidad_balones debe ser positivo.")
@@ -67,6 +69,8 @@ def crear_pedido(
         raise ValueError("Montos no pueden ser negativos.")
     if peso_balon_kg not in (10, 45):
         raise ValueError("peso_balon_kg debe ser 10 o 45.")
+    if metodo_pago is not None and metodo_pago not in ("EFECTIVO", "YAPE"):
+        raise ValueError("metodo_pago debe ser EFECTIVO o YAPE.")
 
     pendiente_centavos = max(0, total_centavos - pagado_centavos)
     pagado = pendiente_centavos == 0
@@ -92,6 +96,8 @@ def crear_pedido(
     }
     if precio_unitario_centavos is not None:
         item["precio_unitario_centavos"] = precio_unitario_centavos
+    if metodo_pago is not None and pagado:
+        item["metodo_pago"] = metodo_pago
 
     table = get_table(get_dynamodb_tables().pedidos)
     table.put_item(
@@ -164,25 +170,38 @@ def patch_pedido(pedido_id: str, **fields: Any) -> DynamoPedido | None:
     fields["updated_at"] = datetime.now(UTC).isoformat()
 
     set_parts: list[str] = []
+    remove_parts: list[str] = []
     values: dict[str, Any] = {}
     names: dict[str, str] = {}
     for i, (key, value) in enumerate(fields.items()):
-        placeholder = f":v{i}"
         # `estado` es palabra clave en DynamoDB ⇒ usar alias #attr.
         attr_name = f"#k{i}"
-        set_parts.append(f"{attr_name} = {placeholder}")
         names[attr_name] = key
-        values[placeholder] = value
+        if value is None:
+            # En DynamoDB no se puede SET a None: hay que REMOVE el atributo.
+            remove_parts.append(attr_name)
+        else:
+            placeholder = f":v{i}"
+            set_parts.append(f"{attr_name} = {placeholder}")
+            values[placeholder] = value
+
+    expression_parts: list[str] = []
+    if set_parts:
+        expression_parts.append("SET " + ", ".join(set_parts))
+    if remove_parts:
+        expression_parts.append("REMOVE " + ", ".join(remove_parts))
 
     table = get_table(get_dynamodb_tables().pedidos)
-    response = table.update_item(
-        Key={"pedido_id": pedido_id},
-        UpdateExpression="SET " + ", ".join(set_parts),
-        ExpressionAttributeNames=names,
-        ExpressionAttributeValues=values,
-        ConditionExpression="attribute_exists(pedido_id)",
-        ReturnValues="ALL_NEW",
-    )
+    update_kwargs: dict[str, Any] = {
+        "Key": {"pedido_id": pedido_id},
+        "UpdateExpression": " ".join(expression_parts),
+        "ExpressionAttributeNames": names,
+        "ConditionExpression": "attribute_exists(pedido_id)",
+        "ReturnValues": "ALL_NEW",
+    }
+    if values:
+        update_kwargs["ExpressionAttributeValues"] = values
+    response = table.update_item(**update_kwargs)
     updated = response.get("Attributes")
     return _pedido_from_item(updated) if updated else None
 
@@ -246,6 +265,12 @@ def _pedido_from_item(item: dict[str, Any]) -> DynamoPedido:
         ),
         # Lectura defensiva legacy: pedido sin peso → 10 kg.
         peso_balon_kg=_to_int(item.get("peso_balon_kg", 10)) or 10,
+        # Lectura defensiva: pedido sin metodo_pago → None (legacy o no pagado).
+        metodo_pago=(
+            str(item["metodo_pago"])
+            if item.get("metodo_pago") is not None
+            else None
+        ),
     )
 
 

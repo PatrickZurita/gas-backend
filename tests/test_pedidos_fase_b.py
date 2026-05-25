@@ -857,3 +857,134 @@ def test_v4_reporte_mes_agrega_correctamente(client, db_session):
 def test_v4_reporte_mes_formato_invalido_devuelve_422(client):
     response = client.get("/reportes/mes", params={"mes": "abril-2026"})
     assert response.status_code == 422
+
+
+# --- V2.6: metodo_pago (Efectivo / Yape) ---
+
+
+def test_v26_crear_pedido_pagado_con_efectivo(client, db_session):
+    cliente = _crear_cliente(db_session)
+    response = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["metodo_pago"] == "EFECTIVO"
+
+
+def test_v26_crear_pedido_pagado_con_yape(client, db_session):
+    cliente = _crear_cliente(db_session)
+    response = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "YAPE",
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["metodo_pago"] == "YAPE"
+
+
+def test_v26_crear_pedido_sin_metodo_pago_es_valido(client, db_session):
+    cliente = _crear_cliente(db_session)
+    response = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["metodo_pago"] is None
+
+
+def test_v26_metodo_pago_invalido_devuelve_422(client, db_session):
+    cliente = _crear_cliente(db_session)
+    response = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "TRANSFERENCIA",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_v26_metodo_pago_con_pagado_false_devuelve_422(client, db_session):
+    cliente = _crear_cliente(db_session)
+    response = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_v26_patch_metodo_pago(client, db_session):
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    pedido_id = crear.json()["id"]
+
+    response = client.patch(
+        f"/pedidos/{pedido_id}",
+        json={"metodo_pago": "YAPE"},
+    )
+    assert response.status_code == 200
+    assert response.json()["metodo_pago"] == "YAPE"
+
+
+def test_v26_patch_pagado_false_limpia_metodo_pago(client, db_session):
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    pedido_id = crear.json()["id"]
+
+    response = client.patch(
+        f"/pedidos/{pedido_id}",
+        json={"pagado": False, "monto_pendiente_centavos": 5500},
+    )
+    assert response.status_code == 200
+    assert response.json()["metodo_pago"] is None

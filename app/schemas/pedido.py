@@ -11,6 +11,10 @@ MARCAS_BALON_VALIDAS = {MARCA_BALON_SOLGAS, MARCA_BALON_PETROPERU}
 
 PESOS_BALON_VALIDOS = {10, 45}
 
+METODO_PAGO_EFECTIVO = "EFECTIVO"
+METODO_PAGO_YAPE = "YAPE"
+METODOS_PAGO_VALIDOS = {METODO_PAGO_EFECTIVO, METODO_PAGO_YAPE}
+
 
 class PedidoCreate(BaseModel):
     cliente_id: int | str
@@ -26,6 +30,7 @@ class PedidoCreate(BaseModel):
     monto_pendiente_centavos: int | None = Field(default=None, ge=0)
     observacion: str | None = Field(default=None, max_length=250)
     peso_balon_kg: int = Field(default=10)
+    metodo_pago: str | None = None
 
     @model_validator(mode="after")
     def validar_contrato(self) -> "PedidoCreate":
@@ -38,6 +43,14 @@ class PedidoCreate(BaseModel):
             raise ValueError("marca_balon debe ser SOLGAS o PETROPERU")
         if self.peso_balon_kg not in PESOS_BALON_VALIDOS:
             raise ValueError("peso_balon_kg debe ser 10 o 45")
+        if self.metodo_pago is not None:
+            self.metodo_pago = self.metodo_pago.upper()
+            if self.metodo_pago not in METODOS_PAGO_VALIDOS:
+                raise ValueError("metodo_pago debe ser EFECTIVO o YAPE")
+            if not self.pagado:
+                raise ValueError(
+                    "metodo_pago solo aplica cuando pagado=True"
+                )
         if self.total_soles is None and self.monto_total_centavos is None:
             if self.precio_unitario_centavos is None:
                 raise ValueError(
@@ -74,6 +87,7 @@ class PedidoOut(BaseModel):
     anulado_at: datetime | None = None
     anulado_motivo: str | None = None
     peso_balon_kg: int = 10
+    metodo_pago: str | None = None
 
     class Config:
         from_attributes = True
@@ -91,12 +105,17 @@ class PedidoPatch(BaseModel):
     pagado: bool | None = None
     fecha_entrega: date | None = None
     peso_balon_kg: int | None = None
+    metodo_pago: str | None = None
     motivo_edicion: str | None = Field(default=None, max_length=250)
 
     @model_validator(mode="after")
     def validar_patch(self) -> "PedidoPatch":
         if self.peso_balon_kg is not None and self.peso_balon_kg not in (10, 45):
             raise ValueError("peso_balon_kg debe ser 10 o 45")
+        if self.metodo_pago is not None:
+            self.metodo_pago = self.metodo_pago.upper()
+            if self.metodo_pago not in METODOS_PAGO_VALIDOS:
+                raise ValueError("metodo_pago debe ser EFECTIVO o YAPE")
         if (
             self.monto_total_centavos is not None
             and self.monto_pendiente_centavos is not None

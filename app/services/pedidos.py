@@ -87,6 +87,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
             marca_balon=payload.marca_balon,
             precio_unitario_centavos=precio_unitario_centavos,
             peso_balon_kg=payload.peso_balon_kg,
+            metodo_pago=payload.metodo_pago if payload.pagado else None,
         )
 
         # Side effect de stock: si la jornada existe y no esta cerrada, registrar
@@ -129,6 +130,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
             anulado_at=_parse_dt(pedido.anulado_at),
             anulado_motivo=pedido.anulado_motivo,
             peso_balon_kg=pedido.peso_balon_kg,
+            metodo_pago=getattr(pedido, "metodo_pago", None),
         )
 
     from app.infrastructure.repositories import clientes as repo_clientes
@@ -165,6 +167,7 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
         monto_pendiente_centavos=monto_pendiente_centavos,
         observacion=payload.observacion,
         peso_balon_kg=payload.peso_balon_kg,
+        metodo_pago=payload.metodo_pago,
     )
     return PedidoOut.model_validate(pedido, from_attributes=True)
 
@@ -280,6 +283,7 @@ def patch_pedido(
     pagado: bool | None = None,
     fecha_entrega: date_cls | None = None,
     peso_balon_kg: int | None = None,
+    metodo_pago: str | None = None,
     motivo_edicion: str | None = None,
 ) -> PedidoOut:
     if is_dynamodb_enabled():
@@ -292,6 +296,7 @@ def patch_pedido(
             pagado=pagado,
             fecha_entrega=fecha_entrega,
             peso_balon_kg=peso_balon_kg,
+            metodo_pago=metodo_pago,
             motivo_edicion=motivo_edicion,
         )
 
@@ -314,6 +319,7 @@ def patch_pedido(
             pagado=pagado,
             fecha_entrega=fecha_entrega,
             peso_balon_kg=peso_balon_kg,
+            metodo_pago=metodo_pago,
             motivo_edicion=motivo_edicion,
         )
     except repo_pedidos.PedidoAnuladoEditableError as exc:
@@ -381,6 +387,7 @@ def _patch_pedido_ddb(
     pagado: bool | None,
     fecha_entrega: date_cls | None,
     peso_balon_kg: int | None,
+    metodo_pago: str | None,
     motivo_edicion: str | None,
 ) -> PedidoOut:
     from app.infrastructure.dynamodb.repositories import (
@@ -423,6 +430,10 @@ def _patch_pedido_ddb(
         fields["fecha_entrega"] = fecha_entrega.isoformat()
     if peso_balon_kg is not None:
         fields["peso_balon_kg"] = peso_balon_kg
+    if pagado is False:
+        fields["metodo_pago"] = None
+    elif metodo_pago is not None:
+        fields["metodo_pago"] = metodo_pago
 
     if not fields:
         return _ddb_pedido_to_out(actual)
@@ -503,6 +514,7 @@ def _ddb_pedido_to_out(pedido) -> PedidoOut:
         anulado_at=_parse_dt(pedido.anulado_at),
         anulado_motivo=pedido.anulado_motivo,
         peso_balon_kg=pedido.peso_balon_kg,
+        metodo_pago=getattr(pedido, "metodo_pago", None),
     )
 
 

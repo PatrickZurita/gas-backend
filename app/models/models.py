@@ -89,6 +89,10 @@ class Pedido(Base):
             "peso_balon_kg IN (10, 45)",
             name="ck_pedidos_peso_balon_kg_valido",
         ),
+        CheckConstraint(
+            "metodo_pago IS NULL OR metodo_pago IN ('EFECTIVO', 'YAPE')",
+            name="ck_pedidos_metodo_pago_valido",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -165,6 +169,12 @@ class Pedido(Base):
         nullable=False,
         default=10,
         server_default="10",
+    )
+    # V2.6: metodo de pago. Solo aplica cuando pagado=True. Si pagado=False,
+    # debe ser NULL (la deuda aun no se materializo en un pago).
+    metodo_pago: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
     )
     cliente: Mapped["Cliente"] = relationship(back_populates="pedidos")
     direccion: Mapped["Direccion"] = relationship(back_populates="pedidos")

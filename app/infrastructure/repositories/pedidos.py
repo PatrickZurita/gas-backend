@@ -62,6 +62,7 @@ def crear_pedido(
     monto_pendiente_centavos: int | None = None,
     observacion: str | None = None,
     peso_balon_kg: int = 10,
+    metodo_pago: str | None = None,
 ) -> Pedido:
     try:
         direccion = _get_or_create_direccion_default(db, cliente)
@@ -84,6 +85,7 @@ def crear_pedido(
             ),
             monto_pendiente_centavos=monto_pendiente_centavos,
             peso_balon_kg=peso_balon_kg,
+            metodo_pago=metodo_pago if pagado else None,
         )
 
         db.add(pedido)
@@ -165,6 +167,7 @@ def patch_pedido(
     pagado: bool | None = None,
     fecha_entrega: date | None = None,
     peso_balon_kg: int | None = None,
+    metodo_pago: str | None = None,
     motivo_edicion: str | None = None,
 ) -> Pedido:
     """Edita un pedido ACTIVO y compensa stock si cambia cantidad/fecha/peso.
@@ -209,10 +212,15 @@ def patch_pedido(
             pedido.monto_pendiente_centavos = monto_pendiente_centavos
         if pagado is not None:
             pedido.pagado = pagado
+            if pagado is False:
+                # Si se marca como no pagado, el metodo de pago deja de aplicar.
+                pedido.metodo_pago = None
         if fecha_entrega is not None:
             pedido.fecha_entrega = fecha_entrega
         if peso_balon_kg is not None:
             pedido.peso_balon_kg = peso_balon_kg
+        if metodo_pago is not None:
+            pedido.metodo_pago = metodo_pago
         if motivo_edicion is not None:
             # Reutilizamos `anulado_motivo` para trazabilidad cuando se quiera
             # auditar; alternativa: tabla de auditoria. MVP: anotacion en
