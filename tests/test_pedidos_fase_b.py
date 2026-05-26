@@ -988,3 +988,151 @@ def test_v26_patch_pagado_false_limpia_metodo_pago(client, db_session):
     )
     assert response.status_code == 200
     assert response.json()["metodo_pago"] is None
+
+
+# --- V2.7: deuda al editar pagado se sincroniza correctamente ---
+
+
+def test_v27_patch_pagado_true_quita_pedido_de_deudas(client, db_session):
+    """Bug reportado: usuario marca pedido como pagado desde editar y la
+    deuda sigue apareciendo en /reportes/deudas porque saldo_pendiente
+    (legacy) no se sincroniza con monto_pendiente_centavos.
+
+    Fix: listar_pedidos_con_deuda filtra por pagado=False (semantico) y
+    patch_pedido sincroniza saldo_pendiente.
+    """
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+    assert crear.status_code == 201
+    pedido_id = crear.json()["id"]
+
+    # Verificamos que aparece en deudas inicialmente.
+    deudas_inicial = client.get("/reportes/deudas").json()
+    assert deudas_inicial["pedidos_count"] == 1
+
+    # Usuario edita y marca como pagado (sin enviar monto_pendiente_centavos).
+    response = client.patch(f"/pedidos/{pedido_id}", json={"pagado": True})
+    assert response.status_code == 200
+    assert response.json()["pagado"] is True
+    assert response.json()["monto_pendiente_centavos"] == 0
+
+    # La deuda ya no debe aparecer.
+    deudas_final = client.get("/reportes/deudas").json()
+    assert deudas_final["pedidos_count"] == 0
+    assert deudas_final["monto_pendiente_centavos"] == 0
+
+
+def test_v27_patch_pagado_true_actualiza_resumen_dia_correcto(client, db_session):
+    """El reporte del dia del pedido (no de hoy) refleja el pedido como
+    pagado al editarlo. Verifica que monto_pagado del dia sube y
+    monto_pendiente baja sin mover el monto entre fechas.
+    """
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+    pedido_id = crear.json()["id"]
+
+    reporte_inicial = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    assert reporte_inicial["monto_total_centavos"] == 5500
+    assert reporte_inicial["monto_pagado_centavos"] == 0
+    assert reporte_inicial["monto_pendiente_centavos"] == 5500
+
+    client.patch(f"/pedidos/{pedido_id}", json={"pagado": True})
+
+    reporte_final = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    # El total facturado del dia no cambia (el pedido siempre conto como
+    # vendido); lo que cambia es la distribucion pagado/pendiente.
+    assert reporte_final["monto_total_centavos"] == 5500
+    assert reporte_final["monto_pagado_centavos"] == 5500
+    assert reporte_final["monto_pendiente_centavos"] == 0
+
+
+def test_v27_patch_pagado_true_no_afecta_otros_dias(client, db_session):
+    """Si el pedido es del 16 y hoy seria otro dia, marcarlo como pagado
+    NO suma a otra fecha. La deuda se quita correctamente y el
+    monto_pagado del 16 sube; los demas dias quedan intactos.
+    """
+    cliente = _crear_cliente(db_session)
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+    crear_otro = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-17",
+            "cantidad_balones": 2,
+            "total_soles": 100,
+            "pagado": True,
+        },
+    )
+    assert crear_otro.status_code == 201
+
+    pedido_16 = [
+        p
+        for p in client.get(
+            "/reportes/dia", params={"fecha": "2026-01-16"}
+        ).json()["pedidos"]
+    ][0]
+    client.patch(f"/pedidos/{pedido_16['id']}", json={"pagado": True})
+
+    r17 = client.get("/reportes/dia", params={"fecha": "2026-01-17"}).json()
+    # El reporte del 17 no se modifica.
+    assert r17["monto_total_centavos"] == 10000
+    assert r17["monto_pagado_centavos"] == 10000
+    assert r17["monto_pendiente_centavos"] == 0
+
+
+def test_v27_patch_solo_pagado_true_sin_monto_pendiente_sigue_sincronizado(
+    client, db_session
+):
+    """Si el frontend solo manda pagado=True (sin monto_pendiente_centavos),
+    el repo debe poner monto_pendiente_centavos=0 y saldo_pendiente=0
+    automaticamente.
+    """
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+    pedido_id = crear.json()["id"]
+
+    response = client.patch(f"/pedidos/{pedido_id}", json={"pagado": True})
+    body = response.json()
+    assert body["pagado"] is True
+    assert body["monto_pendiente_centavos"] == 0
+    assert float(body["saldo_pendiente"]) == 0.0

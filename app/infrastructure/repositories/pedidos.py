@@ -210,8 +210,17 @@ def patch_pedido(
             pedido.monto_total_centavos = monto_total_centavos
         if monto_pendiente_centavos is not None:
             pedido.monto_pendiente_centavos = monto_pendiente_centavos
+            # Sync legacy `saldo_pendiente` (Decimal) para que queries que
+            # filtran por ese campo (ej. listados antiguos) sigan correctas.
+            pedido.saldo_pendiente = Decimal(monto_pendiente_centavos) / Decimal(100)
         if pagado is not None:
             pedido.pagado = pagado
+            if pagado is True:
+                # Al marcar como pagado, los pendientes se ponen a 0 salvo que
+                # el cliente haya pasado un valor explicito (cobro parcial).
+                if monto_pendiente_centavos is None:
+                    pedido.monto_pendiente_centavos = 0
+                    pedido.saldo_pendiente = Decimal("0")
             if pagado is False:
                 # Si se marca como no pagado, el metodo de pago deja de aplicar.
                 pedido.metodo_pago = None

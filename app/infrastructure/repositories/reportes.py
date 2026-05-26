@@ -108,11 +108,18 @@ def listar_pedidos_por_rango(
 
 
 def listar_pedidos_con_deuda(db: Session) -> list[PedidoReporteRow]:
+    """Devuelve pedidos ACTIVOS no pagados.
+
+    Filtro semantico por `Pedido.pagado == False` (no por saldo_pendiente
+    legacy). Cuando el usuario marca un pedido como pagado desde editar,
+    `pagado=True` y la deuda desaparece del listado, aunque por alguna
+    razon `saldo_pendiente` no se haya sincronizado.
+    """
     stmt = (
         select(Pedido, Cliente.alias)
         .join(Cliente, Pedido.cliente_id == Cliente.id)
         .where(
-            Pedido.saldo_pendiente > 0,
+            Pedido.pagado.is_(False),
             Pedido.estado == "ACTIVO",
         )
         .order_by(
