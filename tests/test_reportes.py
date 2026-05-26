@@ -112,6 +112,8 @@ def test_reporte_dia_sin_pedidos_devuelve_totales_en_cero(client):
         "monto_total_centavos": 0,
         "monto_pagado_centavos": 0,
         "monto_pendiente_centavos": 0,
+        "monto_cobrado_efectivo_centavos": 0,
+        "monto_cobrado_yape_centavos": 0,
         "stock": {
             "fecha": "2026-01-16",
             "stock_iniciado": False,

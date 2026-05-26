@@ -1136,3 +1136,151 @@ def test_v27_patch_solo_pagado_true_sin_monto_pendiente_sigue_sincronizado(
     assert body["pagado"] is True
     assert body["monto_pendiente_centavos"] == 0
     assert float(body["saldo_pendiente"]) == 0.0
+
+
+# --- V2.8: breakdown cobrado por metodo de pago ---
+
+
+def test_v28_reporte_dia_separa_cobrado_por_metodo(client, db_session):
+    cliente = _crear_cliente(db_session)
+    # Tres pedidos: 1 efectivo, 1 yape, 1 deuda sin metodo
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 2,
+            "total_soles": 110,
+            "pagado": True,
+            "metodo_pago": "YAPE",
+        },
+    )
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+
+    reporte = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    assert reporte["monto_cobrado_efectivo_centavos"] == 5500
+    assert reporte["monto_cobrado_yape_centavos"] == 11000
+    # La suma de los buckets debe ser <= cobrado_total (deuda excluida).
+    assert (
+        reporte["monto_cobrado_efectivo_centavos"]
+        + reporte["monto_cobrado_yape_centavos"]
+        == reporte["monto_pagado_centavos"]
+    )
+
+
+def test_v28_reporte_dia_pagado_sin_metodo_no_se_atribuye(client, db_session):
+    """Pedido pagado=True sin metodo_pago (legacy) no se cuenta en ningun
+    bucket. La suma efectivo+yape sera menor que monto_pagado_centavos."""
+    cliente = _crear_cliente(db_session)
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+        },
+    )
+
+    reporte = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    assert reporte["monto_pagado_centavos"] == 5500
+    assert reporte["monto_cobrado_efectivo_centavos"] == 0
+    assert reporte["monto_cobrado_yape_centavos"] == 0
+
+
+def test_v28_reporte_semana_acumula_breakdown(client, db_session):
+    cliente = _crear_cliente(db_session)
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-19",  # lunes
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-21",  # miercoles
+            "cantidad_balones": 2,
+            "total_soles": 110,
+            "pagado": True,
+            "metodo_pago": "YAPE",
+        },
+    )
+
+    semana = client.get(
+        "/reportes/semana", params={"desde": "2026-01-19"}
+    ).json()
+    assert semana["total_cobrado_efectivo_centavos"] == 5500
+    assert semana["total_cobrado_yape_centavos"] == 11000
+
+    # Por dia tambien debe distinguir.
+    lunes = next(d for d in semana["dias"] if d["fecha"] == "2026-01-19")
+    miercoles = next(d for d in semana["dias"] if d["fecha"] == "2026-01-21")
+    assert lunes["cobrado_efectivo_centavos"] == 5500
+    assert lunes["cobrado_yape_centavos"] == 0
+    assert miercoles["cobrado_efectivo_centavos"] == 0
+    assert miercoles["cobrado_yape_centavos"] == 11000
+
+
+def test_v28_patch_pagado_actualiza_breakdown_del_dia(client, db_session):
+    """Al cobrar una deuda con PATCH (pagado=True + metodo_pago=YAPE),
+    el reporte del dia debe sumar al bucket de Yape."""
+    cliente = _crear_cliente(db_session)
+    crear = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": False,
+        },
+    )
+    pedido_id = crear.json()["id"]
+
+    reporte_pre = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    assert reporte_pre["monto_cobrado_yape_centavos"] == 0
+
+    client.patch(
+        f"/pedidos/{pedido_id}",
+        json={"pagado": True, "metodo_pago": "YAPE"},
+    )
+
+    reporte_post = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    assert reporte_post["monto_cobrado_yape_centavos"] == 5500
+    assert reporte_post["monto_cobrado_efectivo_centavos"] == 0

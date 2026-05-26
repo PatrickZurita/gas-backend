@@ -64,6 +64,32 @@ def _ddb_pedido_to_deuda(p) -> PedidoDeudaOut:
     return PedidoDeudaOut(**base.model_dump())
 
 
+def _cobrado_por_metodo(
+    pedidos: list, get_pagado, get_metodo, get_cobrado_centavos
+) -> tuple[int, int]:
+    """Suma lo cobrado por metodo de pago.
+
+    Solo cuenta pedidos pagado=True con metodo seteado. Pedidos pagados
+    sin metodo (legacy o creados antes de V2.6) no se atribuyen a ningun
+    bucket para que la suma efectivo+yape <= cobrado_total.
+    """
+    efectivo = 0
+    yape = 0
+    for p in pedidos:
+        if not get_pagado(p):
+            continue
+        metodo = get_metodo(p)
+        if metodo is None:
+            continue
+        metodo_up = str(metodo).upper()
+        cobrado = get_cobrado_centavos(p)
+        if metodo_up == "YAPE":
+            yape += cobrado
+        elif metodo_up == "EFECTIVO":
+            efectivo += cobrado
+    return efectivo, yape
+
+
 def reporte_dia(db: "Session | None", *, fecha: date_cls) -> ReporteDiaOut:
     if is_dynamodb_enabled():
         from app.infrastructure.dynamodb.repositories import pedidos as ddb_pedidos
@@ -72,6 +98,12 @@ def reporte_dia(db: "Session | None", *, fecha: date_cls) -> ReporteDiaOut:
         pedidos_out = [_ddb_pedido_to_reporte_dia(p) for p in items]
         monto_total = sum(p.monto_total_centavos for p in pedidos_out)
         monto_pendiente = sum(p.monto_pendiente_centavos for p in pedidos_out)
+        efectivo, yape = _cobrado_por_metodo(
+            pedidos_out,
+            lambda p: p.pagado,
+            lambda p: p.metodo_pago,
+            lambda p: p.monto_total_centavos - p.monto_pendiente_centavos,
+        )
         return ReporteDiaOut(
             fecha=fecha,
             pedidos_count=len(pedidos_out),
@@ -79,6 +111,8 @@ def reporte_dia(db: "Session | None", *, fecha: date_cls) -> ReporteDiaOut:
             monto_total_centavos=monto_total,
             monto_pagado_centavos=monto_total - monto_pendiente,
             monto_pendiente_centavos=monto_pendiente,
+            monto_cobrado_efectivo_centavos=efectivo,
+            monto_cobrado_yape_centavos=yape,
             stock=service_stock.resumen(db, fecha=fecha),
             pedidos=pedidos_out,
         )
@@ -89,6 +123,12 @@ def reporte_dia(db: "Session | None", *, fecha: date_cls) -> ReporteDiaOut:
     pedidos = repo_reportes.listar_pedidos_por_fecha(session, fecha_entrega=fecha)
     monto_total = sum(p["monto_total_centavos"] for p in pedidos)
     monto_pendiente = sum(p["monto_pendiente_centavos"] for p in pedidos)
+    efectivo, yape = _cobrado_por_metodo(
+        pedidos,
+        lambda p: p["pagado"],
+        lambda p: p.get("metodo_pago"),
+        lambda p: p["monto_total_centavos"] - p["monto_pendiente_centavos"],
+    )
     return ReporteDiaOut(
         fecha=fecha,
         pedidos_count=len(pedidos),
@@ -96,6 +136,8 @@ def reporte_dia(db: "Session | None", *, fecha: date_cls) -> ReporteDiaOut:
         monto_total_centavos=monto_total,
         monto_pagado_centavos=monto_total - monto_pendiente,
         monto_pendiente_centavos=monto_pendiente,
+        monto_cobrado_efectivo_centavos=efectivo,
+        monto_cobrado_yape_centavos=yape,
         stock=service_stock.resumen(db, fecha=fecha),
         pedidos=pedidos,
     )
@@ -159,6 +201,8 @@ def _agrupar_por_dia(pedidos_rows: list[dict] | list) -> dict[date_cls, dict]:
             peso = row.get("peso_balon_kg") or 10
             monto_total = row["monto_total_centavos"]
             monto_pendiente = row["monto_pendiente_centavos"]
+            pagado = row.get("pagado", False)
+            metodo = row.get("metodo_pago")
         else:
             try:
                 fecha = date_cls.fromisoformat(row.fecha_entrega)
@@ -168,6 +212,8 @@ def _agrupar_por_dia(pedidos_rows: list[dict] | list) -> dict[date_cls, dict]:
             peso = getattr(row, "peso_balon_kg", 10) or 10
             monto_total = row.total_centavos
             monto_pendiente = row.pendiente_centavos
+            pagado = getattr(row, "pagado", False)
+            metodo = getattr(row, "metodo_pago", None)
 
         bucket = by_day.setdefault(
             fecha,
@@ -178,6 +224,8 @@ def _agrupar_por_dia(pedidos_rows: list[dict] | list) -> dict[date_cls, dict]:
                 "vendido_centavos": 0,
                 "cobrado_centavos": 0,
                 "pendiente_centavos": 0,
+                "cobrado_efectivo_centavos": 0,
+                "cobrado_yape_centavos": 0,
             },
         )
         bucket["pedidos_count"] += 1
@@ -186,8 +234,15 @@ def _agrupar_por_dia(pedidos_rows: list[dict] | list) -> dict[date_cls, dict]:
         else:
             bucket["balones_10kg"] += cantidad
         bucket["vendido_centavos"] += monto_total
-        bucket["cobrado_centavos"] += monto_total - monto_pendiente
+        cobrado_pedido = monto_total - monto_pendiente
+        bucket["cobrado_centavos"] += cobrado_pedido
         bucket["pendiente_centavos"] += monto_pendiente
+        if pagado and metodo is not None:
+            metodo_up = str(metodo).upper()
+            if metodo_up == "YAPE":
+                bucket["cobrado_yape_centavos"] += cobrado_pedido
+            elif metodo_up == "EFECTIVO":
+                bucket["cobrado_efectivo_centavos"] += cobrado_pedido
     return by_day
 
 
@@ -224,6 +279,10 @@ def _totales_desde_dias(dias: list[ResumenDiaDetalle]) -> dict:
         "total_vendido_centavos": sum(d.vendido_centavos for d in dias),
         "total_cobrado_centavos": sum(d.cobrado_centavos for d in dias),
         "total_pendiente_centavos": sum(d.pendiente_centavos for d in dias),
+        "total_cobrado_efectivo_centavos": sum(
+            d.cobrado_efectivo_centavos for d in dias
+        ),
+        "total_cobrado_yape_centavos": sum(d.cobrado_yape_centavos for d in dias),
         "balones_10kg": sum(d.balones_10kg for d in dias),
         "balones_45kg": sum(d.balones_45kg for d in dias),
     }
@@ -307,6 +366,8 @@ def _listar_pedidos_rango(
                 "peso_balon_kg": p.peso_balon_kg or 10,
                 "monto_total_centavos": monto_total,
                 "monto_pendiente_centavos": monto_pendiente,
+                "pagado": p.pagado,
+                "metodo_pago": p.metodo_pago,
             }
         )
     return rows

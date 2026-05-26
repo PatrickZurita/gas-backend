@@ -24,6 +24,7 @@ class PedidoReporteRow(TypedDict):
     fecha_entrega: date
     created_at: datetime
     peso_balon_kg: int
+    metodo_pago: str | None
 
 
 def _soles_a_centavos(monto_soles: Decimal) -> int:
@@ -61,6 +62,7 @@ def _pedido_to_reporte_row(pedido: Pedido, cliente_alias: str) -> PedidoReporteR
         "fecha_entrega": pedido.fecha_entrega,
         "created_at": pedido.created_at,
         "peso_balon_kg": pedido.peso_balon_kg or 10,
+        "metodo_pago": pedido.metodo_pago,
     }
 
 
