@@ -56,6 +56,7 @@ def _ddb_pedido_to_reporte_dia(p) -> PedidoReporteDiaOut:
         fecha_entrega=fecha,
         created_at=created_at,
         peso_balon_kg=getattr(p, "peso_balon_kg", 10),
+        metodo_pago=getattr(p, "metodo_pago", None),
     )
 
 

@@ -1253,6 +1253,55 @@ def test_v28_reporte_semana_acumula_breakdown(client, db_session):
     assert miercoles["cobrado_yape_centavos"] == 11000
 
 
+def test_v28_pedido_en_reporte_dia_expone_metodo_pago(client, db_session):
+    """Cada pedido en /reportes/dia debe exponer metodo_pago para que el
+    frontend pueda renderizar un chip Efectivo/Yape al lado del badge
+    Pagado. Sin esto, Pydantic descarta el campo silenciosamente.
+    """
+    cliente = _crear_cliente(db_session)
+    crear_yape = client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "YAPE",
+        },
+    )
+    assert crear_yape.status_code == 201
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+            "metodo_pago": "EFECTIVO",
+        },
+    )
+    # Pedido legacy sin metodo (pagado=True pero sin elegir metodo).
+    client.post(
+        "/pedidos",
+        json={
+            "cliente_id": cliente.id,
+            "fecha_entrega": "2026-01-16",
+            "cantidad_balones": 1,
+            "total_soles": 55,
+            "pagado": True,
+        },
+    )
+
+    reporte = client.get(
+        "/reportes/dia", params={"fecha": "2026-01-16"}
+    ).json()
+    metodos = sorted([p.get("metodo_pago") for p in reporte["pedidos"]],
+                     key=lambda x: (x is None, x))
+    assert metodos == ["EFECTIVO", "YAPE", None]
+
+
 def test_v28_patch_pagado_actualiza_breakdown_del_dia(client, db_session):
     """Al cobrar una deuda con PATCH (pagado=True + metodo_pago=YAPE),
     el reporte del dia debe sumar al bucket de Yape."""

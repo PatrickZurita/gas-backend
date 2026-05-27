@@ -18,6 +18,7 @@ class PedidoReporteDiaOut(BaseModel):
     fecha_entrega: date
     created_at: datetime
     peso_balon_kg: int = 10
+    metodo_pago: str | None = None
 
 
 class ReporteDiaOut(BaseModel):
@@ -50,6 +51,7 @@ class PedidoDeudaOut(BaseModel):
     fecha_entrega: date
     created_at: datetime
     peso_balon_kg: int = 10
+    metodo_pago: str | None = None
 
 
 class ReporteDeudasOut(BaseModel):
