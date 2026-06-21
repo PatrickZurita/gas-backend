@@ -251,11 +251,13 @@ def _construir_dias_detalle(
     by_day: dict[date_cls, dict],
     desde: date_cls,
     hasta: date_cls,
+    db: "Session | None",
 ) -> list[ResumenDiaDetalle]:
     detalles: list[ResumenDiaDetalle] = []
     actual = desde
     while actual <= hasta:
         info = by_day.get(actual)
+        stock_info = _stock_resumen_para_reporte(db, actual)
         if info is None:
             detalles.append(
                 ResumenDiaDetalle(
@@ -263,15 +265,39 @@ def _construir_dias_detalle(
                     pedidos_count=0,
                     balones_10kg=0,
                     balones_45kg=0,
+                    compras_10kg=stock_info["compras_10kg"],
+                    compras_45kg=stock_info["compras_45kg"],
+                    stock_final_10kg=stock_info["stock_final_10kg"],
+                    stock_final_45kg=stock_info["stock_final_45kg"],
                     vendido_centavos=0,
                     cobrado_centavos=0,
                     pendiente_centavos=0,
                 )
             )
         else:
-            detalles.append(ResumenDiaDetalle(fecha=actual, **info))
+            detalles.append(
+                ResumenDiaDetalle(fecha=actual, **info, **stock_info)
+            )
         actual = actual + timedelta(days=1)
     return detalles
+
+
+def _stock_resumen_para_reporte(db: "Session | None", fecha: date_cls) -> dict:
+    resumen = service_stock.resumen(db, fecha=fecha)
+    por_peso = resumen.por_peso
+    if por_peso is None:
+        return {
+            "compras_10kg": 0,
+            "compras_45kg": 0,
+            "stock_final_10kg": 0,
+            "stock_final_45kg": 0,
+        }
+    return {
+        "compras_10kg": por_peso.diez_kg.compras,
+        "compras_45kg": por_peso.cuarenta_y_cinco_kg.compras,
+        "stock_final_10kg": por_peso.diez_kg.stock_disponible,
+        "stock_final_45kg": por_peso.cuarenta_y_cinco_kg.stock_disponible,
+    }
 
 
 def _totales_desde_dias(dias: list[ResumenDiaDetalle]) -> dict:
@@ -286,6 +312,8 @@ def _totales_desde_dias(dias: list[ResumenDiaDetalle]) -> dict:
         "total_cobrado_yape_centavos": sum(d.cobrado_yape_centavos for d in dias),
         "balones_10kg": sum(d.balones_10kg for d in dias),
         "balones_45kg": sum(d.balones_45kg for d in dias),
+        "total_compras_10kg": sum(d.compras_10kg for d in dias),
+        "total_compras_45kg": sum(d.compras_45kg for d in dias),
     }
 
 
@@ -293,7 +321,7 @@ def reporte_semana(db: "Session | None", *, desde: date_cls) -> ResumenSemana:
     hasta = desde + timedelta(days=6)
     pedidos_rows = _listar_pedidos_rango(db, desde=desde, hasta=hasta)
     by_day = _agrupar_por_dia(pedidos_rows)
-    dias = _construir_dias_detalle(by_day, desde, hasta)
+    dias = _construir_dias_detalle(by_day, desde, hasta, db)
     totales = _totales_desde_dias(dias)
     return ResumenSemana(desde=desde, hasta=hasta, dias=dias, **totales)
 
@@ -314,7 +342,7 @@ def reporte_mes(db: "Session | None", *, mes: str) -> ResumenMes:
     hasta = date_cls(anio, mes_num, ultimo)
     pedidos_rows = _listar_pedidos_rango(db, desde=desde, hasta=hasta)
     by_day = _agrupar_por_dia(pedidos_rows)
-    dias = _construir_dias_detalle(by_day, desde, hasta)
+    dias = _construir_dias_detalle(by_day, desde, hasta, db)
     totales = _totales_desde_dias(dias)
     return ResumenMes(desde=desde, hasta=hasta, mes=mes, dias=dias, **totales)
 

@@ -56,6 +56,8 @@ class MovimientoStockOut(BaseModel):
 
 
 class StockPorPesoOut(BaseModel):
+    inicio: int = 0
+    compras: int = 0
     salidas: int = 0
     entradas: int = 0
     reversas: int = 0
@@ -84,6 +86,7 @@ class StockResumenOut(BaseModel):
     fecha: date
     stock_iniciado: bool
     stock_inicial: int | None = None
+    compras: int = 0
     entradas: int = 0
     salidas: int = 0
     ajustes: int = 0

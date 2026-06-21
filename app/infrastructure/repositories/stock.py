@@ -76,6 +76,65 @@ def iniciar_dia(
     return jornada
 
 
+def iniciar_dia_por_peso(
+    db: Session,
+    *,
+    fecha: date,
+    stock_10kg: int,
+    stock_45kg: int,
+    observacion: str | None = None,
+) -> StockJornada:
+    stock_total = stock_10kg + stock_45kg
+    jornada = StockJornada(
+        fecha=fecha,
+        stock_inicial=stock_total,
+        stock_actual=stock_total,
+        cerrado=False,
+    )
+    db.add(jornada)
+    db.flush()
+
+    if stock_10kg > 0:
+        db.add(
+            MovimientoStock(
+                stock_jornada_id=jornada.id,
+                fecha=fecha,
+                tipo=TIPO_INICIO_DIA,
+                cantidad_delta=stock_10kg,
+                stock_resultante=stock_10kg,
+                observacion=observacion or "Inicio de dia",
+                peso_balon_kg=10,
+            )
+        )
+    if stock_45kg > 0:
+        db.add(
+            MovimientoStock(
+                stock_jornada_id=jornada.id,
+                fecha=fecha,
+                tipo=TIPO_INICIO_DIA,
+                cantidad_delta=stock_45kg,
+                stock_resultante=stock_total,
+                observacion=observacion or "Inicio de dia",
+                peso_balon_kg=45,
+            )
+        )
+    if stock_total == 0:
+        db.add(
+            MovimientoStock(
+                stock_jornada_id=jornada.id,
+                fecha=fecha,
+                tipo=TIPO_INICIO_DIA,
+                cantidad_delta=0,
+                stock_resultante=0,
+                observacion=observacion or "Inicio de dia",
+            )
+        )
+
+    db.commit()
+    db.refresh(jornada)
+    return jornada
+
+
 def registrar_entrada(
     db: Session,
     *,
@@ -228,6 +287,7 @@ def construir_resumen(db: Session, fecha: date) -> dict[str, object]:
             "fecha": fecha,
             "stock_iniciado": False,
             "stock_inicial": None,
+            "compras": 0,
             "entradas": 0,
             "salidas": 0,
             "ajustes": 0,
@@ -261,6 +321,7 @@ def construir_resumen(db: Session, fecha: date) -> dict[str, object]:
         "fecha": fecha,
         "stock_iniciado": True,
         "stock_inicial": jornada.stock_inicial,
+        "compras": entradas,
         "entradas": entradas,
         "salidas": salidas,
         "ajustes": ajustes,
@@ -276,6 +337,8 @@ def construir_resumen(db: Session, fecha: date) -> dict[str, object]:
 def _bucket_por_peso_vacio() -> dict[str, dict[str, int]]:
     return {
         "10kg": {
+            "inicio": 0,
+            "compras": 0,
             "salidas": 0,
             "entradas": 0,
             "reversas": 0,
@@ -283,6 +346,8 @@ def _bucket_por_peso_vacio() -> dict[str, dict[str, int]]:
             "stock_disponible": 0,
         },
         "45kg": {
+            "inicio": 0,
+            "compras": 0,
             "salidas": 0,
             "entradas": 0,
             "reversas": 0,
@@ -298,17 +363,28 @@ def construir_resumen_por_peso(
 ) -> dict[str, dict[str, int]]:
     """Segrega movimientos en buckets 10 kg y 45 kg.
 
-    El `stock_inicial` global se asigna al bucket 10 kg (decision V2.3
-    porque el stock legacy es exclusivamente 10 kg; los 45 kg parten de 0).
-    Movimientos sin `peso_balon_kg` se interpretan como 10 kg (legacy).
+    El `stock_inicial` global legacy se asigna al bucket 10 kg cuando no
+    existen movimientos de inicio por peso. Movimientos sin `peso_balon_kg`
+    se interpretan como 10 kg (legacy).
     """
     buckets = _bucket_por_peso_vacio()
-    buckets["10kg"]["stock_disponible"] = stock_inicial
+    tiene_inicio_por_peso = any(
+        mov.tipo == TIPO_INICIO_DIA and mov.peso_balon_kg is not None
+        for mov in movimientos
+    )
+    if not tiene_inicio_por_peso:
+        buckets["10kg"]["inicio"] = stock_inicial
+        buckets["10kg"]["stock_disponible"] = stock_inicial
 
     for mov in movimientos:
         bucket_key = "45kg" if (mov.peso_balon_kg or 10) == 45 else "10kg"
         bucket = buckets[bucket_key]
-        if mov.tipo == TIPO_ENTRADA:
+        if mov.tipo == TIPO_INICIO_DIA:
+            if mov.peso_balon_kg is not None:
+                bucket["inicio"] += mov.cantidad_delta
+                bucket["stock_disponible"] += mov.cantidad_delta
+        elif mov.tipo == TIPO_ENTRADA:
+            bucket["compras"] += mov.cantidad_delta
             bucket["entradas"] += mov.cantidad_delta
             bucket["stock_disponible"] += mov.cantidad_delta
         elif mov.tipo == TIPO_SALIDA_PEDIDO:
@@ -320,6 +396,6 @@ def construir_resumen_por_peso(
         elif mov.tipo == TIPO_AJUSTE:
             bucket["ajustes"] += mov.cantidad_delta
             bucket["stock_disponible"] += mov.cantidad_delta
-        # INICIO_DIA se ignora aqui: ya esta sumado via `stock_inicial`.
+        # INICIO_DIA legacy sin peso se ignora: ya esta sumado via stock_inicial.
 
     return buckets

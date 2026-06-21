@@ -67,6 +67,10 @@ class ResumenDiaDetalle(BaseModel):
     pedidos_count: int
     balones_10kg: int
     balones_45kg: int
+    compras_10kg: int = 0
+    compras_45kg: int = 0
+    stock_final_10kg: int = 0
+    stock_final_45kg: int = 0
     vendido_centavos: int
     cobrado_centavos: int
     pendiente_centavos: int
@@ -87,6 +91,8 @@ class ResumenSemana(BaseModel):
     total_cobrado_yape_centavos: int = 0
     balones_10kg: int
     balones_45kg: int
+    total_compras_10kg: int = 0
+    total_compras_45kg: int = 0
     dias: list[ResumenDiaDetalle]
 
 
@@ -102,4 +108,6 @@ class ResumenMes(BaseModel):
     total_cobrado_yape_centavos: int = 0
     balones_10kg: int
     balones_45kg: int
+    total_compras_10kg: int = 0
+    total_compras_45kg: int = 0
     dias: list[ResumenDiaDetalle]

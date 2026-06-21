@@ -32,6 +32,8 @@ TIPO_REVERSA_ANULACION = "REVERSA_ANULACION"
 
 def _bucket_vacio() -> dict:
     return {
+        "inicio": 0,
+        "compras": 0,
         "salidas": 0,
         "entradas": 0,
         "reversas": 0,
@@ -320,9 +322,7 @@ def continuar_de_ayer(
     db: "Session | None", *, fecha: date_cls
 ) -> StockResumenOut:
     """Crea la jornada de `fecha` arrastrando el stock por peso de la
-    ultima jornada anterior. El stock 10 kg va como stock_inicial (bucket
-    legacy 10 kg). El stock 45 kg se registra como ENTRADA con peso 45
-    inmediatamente despues, asi el resumen por peso queda correcto.
+    ultima jornada anterior. El carry-over es inicio del dia, no compra.
     """
     if is_dynamodb_enabled():
         return _ddb_continuar_de_ayer(fecha)
@@ -348,20 +348,13 @@ def continuar_de_ayer(
     stock_10 = max(0, por_peso["10kg"]["stock_disponible"])
     stock_45 = max(0, por_peso["45kg"]["stock_disponible"])
 
-    jornada = repo_stock.iniciar_dia(
+    repo_stock.iniciar_dia_por_peso(
         session,
         fecha=fecha,
-        stock_inicial=stock_10,
+        stock_10kg=stock_10,
+        stock_45kg=stock_45,
         observacion=f"Continuado de {jornada_anterior.fecha.isoformat()}",
     )
-    if stock_45 > 0:
-        repo_stock.registrar_entrada(
-            session,
-            jornada=jornada,
-            cantidad=stock_45,
-            observacion=f"Carry-over 45kg de {jornada_anterior.fecha.isoformat()}",
-            peso_balon_kg=45,
-        )
 
     return StockResumenOut(**repo_stock.construir_resumen(session, fecha))
 
@@ -379,11 +372,19 @@ def _ddb_preview_continuar(fecha: date_cls) -> StockContinuarPreviewOut:
         return StockContinuarPreviewOut(puede_continuar=False)
     ultima = todas[0]
     movs = ddb_movs.listar_movimientos_por_fecha(ultima.fecha)
-    stock_10 = ultima.stock_inicial
+    tiene_inicio_por_peso = any(
+        m.tipo == TIPO_INICIO_DIA and m.peso_balon_kg is not None for m in movs
+    )
+    stock_10 = 0 if tiene_inicio_por_peso else ultima.stock_inicial
     stock_45 = 0
     for m in movs:
         bucket_45 = (m.peso_balon_kg or 10) == 45
-        if m.tipo == TIPO_ENTRADA:
+        if m.tipo == TIPO_INICIO_DIA and m.peso_balon_kg is not None:
+            if bucket_45:
+                stock_45 += m.cantidad_delta
+            else:
+                stock_10 += m.cantidad_delta
+        elif m.tipo == TIPO_ENTRADA:
             if bucket_45:
                 stock_45 += m.cantidad_delta
             else:
@@ -430,25 +431,33 @@ def _ddb_continuar_de_ayer(fecha: date_cls) -> StockResumenOut:
             "No hay una jornada anterior para arrastrar el stock."
         )
 
-    ddb_jornadas.abrir_jornada(fecha.isoformat(), preview.stock_10kg)
-    ddb_movs.registrar_movimiento(
-        fecha=fecha.isoformat(),
-        tipo=TIPO_INICIO_DIA,
-        cantidad_delta=preview.stock_10kg,
-        stock_resultante=preview.stock_10kg,
-        observacion=f"Continuado de {preview.fecha_origen.isoformat()}",
-    )
-    if preview.stock_45kg > 0:
-        resultante = ddb_jornadas.aplicar_delta(
-            fecha.isoformat(), preview.stock_45kg
-        )
+    stock_total = preview.stock_10kg + preview.stock_45kg
+    ddb_jornadas.abrir_jornada(fecha.isoformat(), stock_total)
+    if preview.stock_10kg > 0:
         ddb_movs.registrar_movimiento(
             fecha=fecha.isoformat(),
-            tipo=TIPO_ENTRADA,
+            tipo=TIPO_INICIO_DIA,
+            cantidad_delta=preview.stock_10kg,
+            stock_resultante=preview.stock_10kg,
+            observacion=f"Continuado de {preview.fecha_origen.isoformat()}",
+            peso_balon_kg=10,
+        )
+    if preview.stock_45kg > 0:
+        ddb_movs.registrar_movimiento(
+            fecha=fecha.isoformat(),
+            tipo=TIPO_INICIO_DIA,
             cantidad_delta=preview.stock_45kg,
-            stock_resultante=resultante,
-            observacion=f"Carry-over 45kg de {preview.fecha_origen.isoformat()}",
+            stock_resultante=stock_total,
+            observacion=f"Continuado de {preview.fecha_origen.isoformat()}",
             peso_balon_kg=45,
+        )
+    if stock_total == 0:
+        ddb_movs.registrar_movimiento(
+            fecha=fecha.isoformat(),
+            tipo=TIPO_INICIO_DIA,
+            cantidad_delta=0,
+            stock_resultante=0,
+            observacion=f"Continuado de {preview.fecha_origen.isoformat()}",
         )
     return _ddb_resumen(fecha)
 
@@ -525,6 +534,7 @@ def _ddb_resumen(fecha: date_cls) -> StockResumenOut:
             fecha=fecha,
             stock_iniciado=False,
             stock_inicial=None,
+            compras=0,
             entradas=0,
             salidas=0,
             ajustes=0,
@@ -545,11 +555,21 @@ def _ddb_resumen(fecha: date_cls) -> StockResumenOut:
     ajustes = sum(m.cantidad_delta for m in movs if m.tipo == TIPO_AJUSTE)
 
     por_peso = _bucket_por_peso_vacio()
-    por_peso["10kg"]["stock_disponible"] = jornada.stock_inicial
+    tiene_inicio_por_peso = any(
+        m.tipo == TIPO_INICIO_DIA and m.peso_balon_kg is not None for m in movs
+    )
+    if not tiene_inicio_por_peso:
+        por_peso["10kg"]["inicio"] = jornada.stock_inicial
+        por_peso["10kg"]["stock_disponible"] = jornada.stock_inicial
     for m in movs:
         bucket_key = "45kg" if (m.peso_balon_kg or 10) == 45 else "10kg"
         bucket = por_peso[bucket_key]
-        if m.tipo == TIPO_ENTRADA:
+        if m.tipo == TIPO_INICIO_DIA:
+            if m.peso_balon_kg is not None:
+                bucket["inicio"] += m.cantidad_delta
+                bucket["stock_disponible"] += m.cantidad_delta
+        elif m.tipo == TIPO_ENTRADA:
+            bucket["compras"] += m.cantidad_delta
             bucket["entradas"] += m.cantidad_delta
             bucket["stock_disponible"] += m.cantidad_delta
         elif m.tipo == TIPO_SALIDA_PEDIDO:
@@ -566,6 +586,7 @@ def _ddb_resumen(fecha: date_cls) -> StockResumenOut:
         fecha=fecha,
         stock_iniciado=True,
         stock_inicial=jornada.stock_inicial,
+        compras=entradas,
         entradas=entradas,
         salidas=salidas,
         ajustes=ajustes,

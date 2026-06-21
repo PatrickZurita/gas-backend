@@ -81,6 +81,8 @@ def test_stock_resumen_hoy_sin_jornada_devuelve_no_iniciado(client):
 
     assert response.status_code == 200
     bucket_vacio = {
+        "inicio": 0,
+        "compras": 0,
         "salidas": 0,
         "entradas": 0,
         "reversas": 0,
@@ -91,6 +93,7 @@ def test_stock_resumen_hoy_sin_jornada_devuelve_no_iniciado(client):
         "fecha": "2026-01-16",
         "stock_iniciado": False,
         "stock_inicial": None,
+        "compras": 0,
         "entradas": 0,
         "salidas": 0,
         "ajustes": 0,
@@ -151,8 +154,95 @@ def test_entrada_aumenta_stock(client):
     assert response.json()["stock_actual"] == 40
 
     resumen = client.get("/stock/dia", params={"fecha": "2026-01-16"}).json()
+    assert resumen["compras"] == 10
     assert resumen["entradas"] == 10
     assert resumen["stock_actual"] == 40
+
+
+def test_entrada_10kg_aumenta_solo_compras_10kg(client):
+    client.post(
+        "/stock/iniciar-dia",
+        json={"fecha": "2026-01-16", "stock_inicial": 30},
+    )
+
+    response = client.post(
+        "/stock/entrada",
+        json={"fecha": "2026-01-16", "cantidad": 5, "peso_balon_kg": 10},
+    )
+
+    assert response.status_code == 200
+    resumen = client.get("/stock/dia", params={"fecha": "2026-01-16"}).json()
+    assert resumen["compras"] == 5
+    assert resumen["entradas"] == 5
+    assert resumen["por_peso"]["10kg"]["inicio"] == 30
+    assert resumen["por_peso"]["10kg"]["compras"] == 5
+    assert resumen["por_peso"]["10kg"]["entradas"] == 5
+    assert resumen["por_peso"]["10kg"]["stock_disponible"] == 35
+    assert resumen["por_peso"]["45kg"]["compras"] == 0
+    assert resumen["por_peso"]["45kg"]["stock_disponible"] == 0
+
+
+def test_entrada_45kg_aumenta_solo_compras_45kg(client):
+    client.post(
+        "/stock/iniciar-dia",
+        json={"fecha": "2026-01-16", "stock_inicial": 30},
+    )
+
+    response = client.post(
+        "/stock/entrada",
+        json={"fecha": "2026-01-16", "cantidad": 3, "peso_balon_kg": 45},
+    )
+
+    assert response.status_code == 200
+    resumen = client.get("/stock/dia", params={"fecha": "2026-01-16"}).json()
+    assert resumen["compras"] == 3
+    assert resumen["entradas"] == 3
+    assert resumen["por_peso"]["10kg"]["inicio"] == 30
+    assert resumen["por_peso"]["10kg"]["compras"] == 0
+    assert resumen["por_peso"]["10kg"]["stock_disponible"] == 30
+    assert resumen["por_peso"]["45kg"]["inicio"] == 0
+    assert resumen["por_peso"]["45kg"]["compras"] == 3
+    assert resumen["por_peso"]["45kg"]["entradas"] == 3
+    assert resumen["por_peso"]["45kg"]["stock_disponible"] == 3
+
+
+def test_continuar_de_ayer_arrastra_45kg_como_inicio_no_entrada(client):
+    client.post(
+        "/stock/iniciar-dia",
+        json={"fecha": "2026-01-15", "stock_inicial": 32},
+    )
+    client.post(
+        "/stock/entrada",
+        json={
+            "fecha": "2026-01-15",
+            "cantidad": 2,
+            "peso_balon_kg": 45,
+            "observacion": "Compra proveedor 45kg",
+        },
+    )
+
+    response = client.post("/stock/continuar-de-ayer")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["compras"] == 0
+    assert body["entradas"] == 0
+    assert body["stock_inicial"] == 34
+    assert body["stock_actual"] == 34
+    assert body["por_peso"]["10kg"]["inicio"] == 32
+    assert body["por_peso"]["10kg"]["compras"] == 0
+    assert body["por_peso"]["10kg"]["entradas"] == 0
+    assert body["por_peso"]["10kg"]["stock_disponible"] == 32
+    assert body["por_peso"]["45kg"]["inicio"] == 2
+    assert body["por_peso"]["45kg"]["compras"] == 0
+    assert body["por_peso"]["45kg"]["entradas"] == 0
+    assert body["por_peso"]["45kg"]["stock_disponible"] == 2
+
+    detalle = client.get("/stock/dia", params={"fecha": body["fecha"]}).json()
+    tipos = [mov["tipo"] for mov in detalle["movimientos"]]
+    assert tipos == ["INICIO_DIA", "INICIO_DIA"]
+    assert detalle["movimientos"][0]["peso_balon_kg"] == 10
+    assert detalle["movimientos"][1]["peso_balon_kg"] == 45
 
 
 def test_ajuste_corrige_stock_fisico(client):

@@ -822,6 +822,41 @@ def test_v4_reporte_semana_sin_pedidos(client):
     assert len(body["dias"]) == 7
 
 
+def test_v4_reporte_semana_suma_compras_por_peso_sin_contar_inicio(client):
+    client.post(
+        "/stock/iniciar-dia",
+        json={"fecha": "2026-03-09", "stock_inicial": 20},
+    )
+    client.post(
+        "/stock/entrada",
+        json={"fecha": "2026-03-09", "cantidad": 5, "peso_balon_kg": 10},
+    )
+    client.post(
+        "/stock/iniciar-dia",
+        json={"fecha": "2026-03-10", "stock_inicial": 25},
+    )
+    client.post(
+        "/stock/entrada",
+        json={"fecha": "2026-03-10", "cantidad": 2, "peso_balon_kg": 45},
+    )
+
+    response = client.get("/reportes/semana", params={"desde": "2026-03-09"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_compras_10kg"] == 5
+    assert body["total_compras_45kg"] == 2
+    dias_by_date = {d["fecha"]: d for d in body["dias"]}
+    assert dias_by_date["2026-03-09"]["compras_10kg"] == 5
+    assert dias_by_date["2026-03-09"]["compras_45kg"] == 0
+    assert dias_by_date["2026-03-09"]["stock_final_10kg"] == 25
+    assert dias_by_date["2026-03-09"]["stock_final_45kg"] == 0
+    assert dias_by_date["2026-03-10"]["compras_10kg"] == 0
+    assert dias_by_date["2026-03-10"]["compras_45kg"] == 2
+    assert dias_by_date["2026-03-10"]["stock_final_10kg"] == 25
+    assert dias_by_date["2026-03-10"]["stock_final_45kg"] == 2
+
+
 def test_v4_reporte_semana_excluye_anulados(client, db_session):
     activo = _crear_pedido_directo(
         client, db_session, fecha="2026-03-09", cantidad=2, peso=10, total=110

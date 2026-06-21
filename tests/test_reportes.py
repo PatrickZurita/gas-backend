@@ -99,6 +99,8 @@ def test_reporte_dia_sin_pedidos_devuelve_totales_en_cero(client):
 
     assert response.status_code == 200
     bucket_vacio = {
+        "inicio": 0,
+        "compras": 0,
         "salidas": 0,
         "entradas": 0,
         "reversas": 0,
@@ -118,6 +120,7 @@ def test_reporte_dia_sin_pedidos_devuelve_totales_en_cero(client):
             "fecha": "2026-01-16",
             "stock_iniciado": False,
             "stock_inicial": None,
+            "compras": 0,
             "entradas": 0,
             "salidas": 0,
             "ajustes": 0,
