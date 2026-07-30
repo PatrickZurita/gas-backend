@@ -1,12 +1,17 @@
 """Conftest global de tests.
 
-Provee un stub minimo del modulo `boto3.dynamodb.conditions` cuando
-`boto3` no esta instalado en el entorno local. Los repositorios
-DynamoDB importan `Attr` desde ese path para construir
-`FilterExpression`; el stub permite que los tests unitarios con fakes
-funcionen sin la dependencia real.
+Provee un stub minimo del modulo `boto3.dynamodb.conditions`. Los
+repositorios DynamoDB importan `Attr` desde ese path para construir
+`FilterExpression`, y los fakes de tabla de los tests evaluan esas
+condiciones via el metodo interno `_evaluate`, que solo existe en las
+clases del stub. Con `boto3` real instalado, `Attr(...).eq(...)`
+devuelve objetos reales sin `_evaluate` y los tests DDB fallan; como
+los tests nunca llaman a AWS real (las tablas se monkeypatchean), el
+stub se instala SIEMPRE, haya o no `boto3` real.
 
-No reemplaza a `boto3` para llamadas reales a AWS.
+Solo se reemplaza el modulo `conditions`; `boto3.dynamodb.types` y el
+resto del paquete real quedan intactos. No reemplaza a `boto3` para
+llamadas reales a AWS.
 """
 
 import sys
@@ -14,18 +19,14 @@ import types
 
 
 def _ensure_boto3_conditions_stub() -> None:
-    if "boto3.dynamodb.conditions" in sys.modules:
-        return
     try:
-        import boto3.dynamodb.conditions  # noqa: F401
-        return
+        import boto3.dynamodb as dynamodb_mod  # boto3 real instalado
     except ImportError:
-        pass
-
-    boto3_mod = sys.modules.setdefault("boto3", types.ModuleType("boto3"))
-    dynamodb_mod = sys.modules.setdefault(
-        "boto3.dynamodb", types.ModuleType("boto3.dynamodb")
-    )
+        boto3_mod = sys.modules.setdefault("boto3", types.ModuleType("boto3"))
+        dynamodb_mod = sys.modules.setdefault(
+            "boto3.dynamodb", types.ModuleType("boto3.dynamodb")
+        )
+        setattr(boto3_mod, "dynamodb", dynamodb_mod)
     conditions_mod = types.ModuleType("boto3.dynamodb.conditions")
 
     class _Attr:
@@ -71,7 +72,6 @@ def _ensure_boto3_conditions_stub() -> None:
     conditions_mod.Attr = _Attr  # type: ignore[attr-defined]
     sys.modules["boto3.dynamodb.conditions"] = conditions_mod
     setattr(dynamodb_mod, "conditions", conditions_mod)
-    setattr(boto3_mod, "dynamodb", dynamodb_mod)
 
 
 _ensure_boto3_conditions_stub()

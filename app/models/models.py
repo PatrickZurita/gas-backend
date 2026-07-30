@@ -21,11 +21,24 @@ from app.db.base import Base  # idealmente mover Base aquí
 
 class Cliente(Base):
     __tablename__ = "clientes"
+    __table_args__ = (
+        CheckConstraint(
+            "canal_captacion IS NULL OR canal_captacion IN "
+            "('VOLANTE', 'FACEBOOK', 'RECOMENDACION', 'CARTEL', 'ANTIGUO', 'OTRO')",
+            name="ck_clientes_canal_captacion_valido",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     alias: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     telefono: Mapped[str] = mapped_column(String(30), index=True)
     nombre: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # P1 #1: como se entero el cliente. Se pregunta UNA vez al crear el
+    # cliente. Legacy queda NULL (patron honesto metodo_pago V2.6).
+    canal_captacion: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
 
     direcciones: Mapped[list[Direccion]] = relationship(
         back_populates="cliente",
@@ -256,3 +269,52 @@ class MovimientoStock(Base):
 
     stock_jornada: Mapped["StockJornada"] = relationship(back_populates="movimientos")
     pedido: Mapped["Pedido | None"] = relationship(back_populates="movimientos_stock")
+
+
+class DemandaPerdida(Base):
+    """P1 #2: la llamada que NO se pudo atender.
+
+    Tabla aparte a proposito: no tiene FK a clientes/pedidos porque registra
+    una llamada rechazada, no una venta (el estado PERDIDO en pedidos fue
+    descartado: obligaria cliente/direccion fantasma y romperia reportes/stock).
+    """
+
+    __tablename__ = "demanda_perdida"
+    __table_args__ = (
+        CheckConstraint(
+            "motivo IN ('SIN_STOCK', 'FUERA_DE_ZONA', 'SATURADO', 'OTRO')",
+            name="ck_demanda_perdida_motivo_valido",
+        ),
+        CheckConstraint(
+            "cantidad_balones >= 1",
+            name="ck_demanda_perdida_cantidad_balones_ge_1",
+        ),
+        CheckConstraint(
+            "peso_balon_kg IN (10, 45)",
+            name="ck_demanda_perdida_peso_balon_kg_valido",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # fecha operativa (dia Lima); la fija el service con fecha_hoy_lima(),
+    # server_default solo como fallback. Mismo patron que movimientos_stock.fecha.
+    fecha: Mapped[date] = mapped_column(
+        Date,
+        nullable=False,
+        index=True,
+        server_default=func.current_date(),
+    )
+    motivo: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    zona_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    cantidad_balones: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    peso_balon_kg: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=10, server_default="10"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )

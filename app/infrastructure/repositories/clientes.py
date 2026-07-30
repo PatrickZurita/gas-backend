@@ -4,8 +4,18 @@ from sqlalchemy.orm import Session
 from app.models.models import Cliente, Direccion, Pedido
 from app.infrastructure.repositories._id_helpers import to_pg_id
 
-def crear_cliente(db: Session, alias: str, telefono: str) -> Cliente:
-    cliente = Cliente(alias=alias, telefono=telefono, nombre=None)
+def crear_cliente(
+    db: Session,
+    alias: str,
+    telefono: str,
+    canal_captacion: str | None = None,
+) -> Cliente:
+    cliente = Cliente(
+        alias=alias,
+        telefono=telefono,
+        nombre=None,
+        canal_captacion=canal_captacion,
+    )
     db.add(cliente)
     db.flush()
     

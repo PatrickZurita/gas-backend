@@ -15,6 +15,7 @@ def crear_cliente(payload: ClienteCreate, db: DbSession) -> ClienteOut:
             db,
             alias=payload.alias.strip(),
             telefono=payload.telefono.strip(),
+            canal_captacion=payload.canal_captacion,
         )
     except AliasDuplicadoError as exc:
         raise HTTPException(

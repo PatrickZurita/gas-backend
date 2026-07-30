@@ -28,6 +28,19 @@ def _cliente_pg_to_out(cliente) -> ClienteOut:
         alias=cliente.alias,
         telefono=cliente.telefono,
         direccion=cliente.alias,
+        canal_captacion=cliente.canal_captacion,
+    )
+
+
+def _cliente_ddb_to_out(c) -> ClienteOut:
+    # Item DDB legacy sin atributo canal_captacion ⇒ None (misma semantica
+    # que legacy PG). Paridad completa enumerada en la spec P1 §6.
+    return ClienteOut(
+        id=c.id,
+        alias=c.alias,
+        telefono=c.telefono,
+        direccion=c.direccion,
+        canal_captacion=getattr(c, "canal_captacion", None),
     )
 
 
@@ -37,17 +50,28 @@ def _monto_total_centavos_pg(pedido) -> int:
     return int(pedido.total_soles * 100)
 
 
-def crear_cliente(db: "Session | None", *, alias: str, telefono: str) -> ClienteOut:
+def crear_cliente(
+    db: "Session | None",
+    *,
+    alias: str,
+    telefono: str,
+    canal_captacion: str | None = None,
+) -> ClienteOut:
     if is_dynamodb_enabled():
         from app.infrastructure.dynamodb.repositories import clientes as ddb
 
+        if canal_captacion is not None:
+            # Decision D11 (spec P1): AWS en standby, la rama nueva es deuda
+            # explicita y visible. Paridad enumerada en la spec P1 §6.
+            raise NotImplementedError(
+                "canal_captacion no esta implementado en el backend DynamoDB "
+                "(AWS en standby, spec P1 §6 / D11)."
+            )
         try:
             c = ddb.crear_cliente_con_id_generado(alias=alias, telefono=telefono)
         except ddb.AliasDuplicadoError as exc:
             raise AliasDuplicadoError(str(exc)) from exc
-        return ClienteOut(
-            id=c.id, alias=c.alias, telefono=c.telefono, direccion=c.direccion
-        )
+        return _cliente_ddb_to_out(c)
 
     from sqlalchemy.exc import IntegrityError
 
@@ -55,7 +79,12 @@ def crear_cliente(db: "Session | None", *, alias: str, telefono: str) -> Cliente
 
     session = _require_db(db)
     try:
-        cliente = pg.crear_cliente(session, alias=alias, telefono=telefono)
+        cliente = pg.crear_cliente(
+            session,
+            alias=alias,
+            telefono=telefono,
+            canal_captacion=canal_captacion,
+        )
     except IntegrityError as exc:
         session.rollback()
         raise AliasDuplicadoError("Ya existe un cliente con ese alias.") from exc
@@ -71,9 +100,7 @@ def obtener_cliente_por_id(
         c = ddb.obtener_cliente_por_id(cliente_id)
         if c is None:
             return None
-        return ClienteOut(
-            id=c.id, alias=c.alias, telefono=c.telefono, direccion=c.direccion
-        )
+        return _cliente_ddb_to_out(c)
 
     from app.infrastructure.repositories import clientes as pg
 
@@ -91,12 +118,7 @@ def buscar_clientes(
         from app.infrastructure.dynamodb.repositories import clientes as ddb
 
         items = ddb.buscar_clientes(q, limit=limit)
-        return [
-            ClienteOut(
-                id=c.id, alias=c.alias, telefono=c.telefono, direccion=c.direccion
-            )
-            for c in items
-        ]
+        return [_cliente_ddb_to_out(c) for c in items]
 
     from app.infrastructure.repositories import clientes as pg
 
@@ -123,12 +145,7 @@ def listar_catalogo_clientes(
 
         # En MVP el volumen es bajo: scan completo y filtramos en memoria.
         items = ddb.listar_catalogo(q=q, limit=limit, offset=offset)
-        return [
-            ClienteOut(
-                id=c.id, alias=c.alias, telefono=c.telefono, direccion=c.direccion
-            )
-            for c in items
-        ]
+        return [_cliente_ddb_to_out(c) for c in items]
 
     from app.infrastructure.repositories import clientes as pg
 
@@ -175,6 +192,7 @@ def listar_clientes_recientes(
                     direccion=cliente.direccion,
                     ultimo_pedido_fecha=fecha,
                     ultimo_total_centavos=p.total_centavos,
+                    canal_captacion=getattr(cliente, "canal_captacion", None),
                 )
             )
             if len(out) >= limit:
@@ -195,6 +213,7 @@ def listar_clientes_recientes(
             direccion=cliente.alias,
             ultimo_pedido_fecha=pedido.fecha_entrega,
             ultimo_total_centavos=_monto_total_centavos_pg(pedido),
+            canal_captacion=cliente.canal_captacion,
         )
         for cliente, pedido in rows
     ]
