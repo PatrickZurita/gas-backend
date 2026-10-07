@@ -2,10 +2,25 @@
 
 > Gobernanza local del backend. Hereda la gobernanza raíz del workspace: [../AGENTS.md](../AGENTS.md). Si hay conflicto, gana la raíz. Guía Claude: [CLAUDE.md](CLAUDE.md).
 
+Este directorio tiene su propio `.git`. Al iniciar una tarea no trivial, leer explícitamente
+`../AGENTS.md` y `../_brain/README.md`: una sesión abierta aquí no debe asumir que el agente
+cargó la gobernanza del Git padre. Revisar rama, `git log -1`, `git status --short` y remoto
+de este repo y de `../` si el cambio afecta contratos, deploy o documentación compartida.
+Leer el último `../_brain/cierre-AAAA-MM-DD*.md` y consultar el MCP global read-only
+`brain_search` (`gas` + tema); usar hasta cinco notas pertinentes, citar las usadas y
+reconciliar con código/Git (repo gana para hechos implementados). Si no hay MCP, declararlo
+y continuar con cierres y docs locales. El cierre consolidado se exporta en `../_brain/`
+desde la raíz GAS, incluyendo SHA/estado de los tres Git afectados; no crear un cierre
+paralelo en `gas-backend/_brain/`. No hacer commit/push/merge sin encargo explícito.
+
 ## Propósito del producto
 Backend del MVP GAS: registro de pedidos de balones de gas (La Molina) para reemplazar el cuaderno físico. Usuario adulto registra desde Android en la calle. Detalle: [README.md](README.md), [../docs/product/GAS-MVP-CONTEXT.md](../docs/product/GAS-MVP-CONTEXT.md).
 
-## Estado actual (vigente 2026-05-22)
+## Estado inicial documentado (2026-05-22)
+
+La lista de fases siguiente es histórica. El import 2026-10-06 documenta backend Fly+Neon
+recuperado el 2026-09-24, stock/reportes y P1 canal/demanda perdida; no prueba salud de
+producción hoy. Verificar Git, código y cierre antes de declarar una tarea pendiente.
 - **PostgreSQL es la base de datos activa** del MVP en uso real (deploy Fly+Neon: https://gas-backend-mvp.fly.dev).
 - **AWS/IaC y DynamoDB en standby**: no se activan en V2. Decisión: [../docs/roadmap/AWS_STANDBY_DECISION.md](../docs/roadmap/AWS_STANDBY_DECISION.md).
 - Fase actual: implementar **V2** sobre PostgreSQL. Orden: [../docs/roadmap/IMPLEMENTATION_ORDER.md](../docs/roadmap/IMPLEMENTATION_ORDER.md).

@@ -2,11 +2,16 @@
 
 > Complementa [AGENTS.md](AGENTS.md) (gobernanza local) y [../AGENTS.md](../AGENTS.md) (raíz). Si hay conflicto, gana `AGENTS.md`.
 
+Lee ambos `AGENTS.md` explícitamente y sigue su protocolo Git + `brain_search`. El cierre
+multi-repo vive en `../_brain/`, no en un `_brain/` del backend.
+
 ## Contexto en una línea
 Backend FastAPI + PostgreSQL + SQLAlchemy + Alembic del MVP GAS (registro de pedidos de gas). PostgreSQL es la base activa; AWS/DynamoDB en standby.
 
 ## Misión actual
-Implementar **V2 sobre PostgreSQL** en orden bloqueante: consistencia stock/resumen → anulación/edición → `peso_balon_kg` 10/45 → stock por peso. No activar AWS ni DynamoDB. Plan: [../docs/roadmap/IMPLEMENTATION_ORDER.md](../docs/roadmap/IMPLEMENTATION_ORDER.md).
+El plan V2 de [../docs/roadmap/IMPLEMENTATION_ORDER.md](../docs/roadmap/IMPLEMENTATION_ORDER.md)
+es histórico. Antes de escoger trabajo, revisar commits, el último cierre y el brain; el backend
+PostgreSQL está desplegado en Fly según el corte 2026-09-24, con AWS en standby.
 
 ## Lo más importante que Claude debe respetar
 - Backend es **source of truth** de stock/resumen; el frontend no recalcula stock crítico.
