@@ -1,6 +1,8 @@
 # Acceso backend BI v1 — Google y lectura separada
 
-**Estado:** código local, sin credenciales reales, consulta Neon, push ni despliegue.
+**Estado:** código local, sin cliente OAuth real, push ni despliegue. El rol
+`gas_readonly` se sustituyó y el runner BI consultó Neon desde un proceso local
+de solo lectura el 2026-10-14; no se probó todavía esta ruta HTTP con Google.
 No modifica el inicio de sesión de Android ni sus rutas existentes.
 
 `GET /bi/v1/corte?desde=YYYY-MM-DD&hasta=YYYY-MM-DD&peso_balon_kg=todos|10|45`
@@ -30,6 +32,8 @@ exportar Excel exigirá un permiso distinto cuando se implemente.
 La consulta usa una transacción PostgreSQL `REPEATABLE READ READ ONLY`, comprueba
 rol y privilegios, y hace `ROLLBACK` al cerrar la solicitud. La política del rol
 en Neon debe también revocar escritura/DDL de forma efectiva. La verificación
-HTTP con un token real y la conexión operativa quedan pendientes de la
-configuración privada y de una revisión de despliegue. Reiniciar el proceso
-backend al rotar `BI_DATABASE_URL`, pues el pool está cacheado.
+HTTP con un principal sintético y la conexión limitada real devolvió 200 para
+un corte agregado de 30 días, con `Cache-Control: no-store`. La prueba de
+Google → BFF → backend con un token real queda pendiente del cliente OAuth
+y configuración privada. Reiniciar el proceso backend al rotar
+`BI_DATABASE_URL`, pues el pool está cacheado.
