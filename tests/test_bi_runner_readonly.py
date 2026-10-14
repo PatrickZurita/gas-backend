@@ -15,7 +15,9 @@ def _estado_valido():
         "pedidos_existe": True, "puede_leer": True,
         "puede_insertar": False, "puede_actualizar": False,
         "puede_borrar": False, "puede_truncar": False,
+        "crea_en_esquema": False, "crea_en_base": False,
         "superusuario": False, "crea_roles": False, "crea_bases": False,
+        "omite_rls": False,
     }
 
 
@@ -25,7 +27,9 @@ def _estado_valido():
     ("pedidos_existe", False), ("puede_leer", False),
     ("puede_insertar", True), ("puede_actualizar", True),
     ("puede_borrar", True), ("puede_truncar", True),
+    ("crea_en_esquema", True), ("crea_en_base", True),
     ("superusuario", True), ("crea_roles", True), ("crea_bases", True),
+    ("omite_rls", True),
 ])
 def test_rol_o_transaccion_inseguros_se_rechazan(campo, valor):
     estado = _estado_valido()
@@ -130,10 +134,12 @@ def test_la_barrera_precede_el_corte_y_siempre_hace_rollback(monkeypatch):
     engine = _EngineFalso(eventos, _estado_valido())
     monkeypatch.setattr(cli, "Session", SesionFalsa)
     monkeypatch.setattr(cli, "_construir_corte", lambda *_, **__: eventos.append("leer_corte"))
+    monkeypatch.setattr(cli, "_obtener_operativo", lambda *_, **__: eventos.append("leer_operativo"))
 
     cli._obtener_corte(engine, desde=date(2026, 10, 1), hasta=date(2026, 10, 2), peso=None)
     assert eventos == [
         "begin", "set_read_only", "comprobar_barreras", "leer_corte",
+        "leer_operativo",
         "rollback", "cerrar",
     ]
 
@@ -144,6 +150,7 @@ def test_barrera_fallida_impide_leer_y_hace_rollback(monkeypatch):
     estado["puede_borrar"] = True
     engine = _EngineFalso(eventos, estado)
     monkeypatch.setattr(cli, "_construir_corte", lambda *_, **__: pytest.fail("Leyó datos"))
+    monkeypatch.setattr(cli, "_obtener_operativo", lambda *_, **__: pytest.fail("Leyó datos"))
 
     with pytest.raises(PermissionError):
         cli._obtener_corte(engine, desde=date(2026, 10, 1),
