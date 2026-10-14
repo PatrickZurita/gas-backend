@@ -64,10 +64,10 @@ def _corte_sintetico():
             "mediana_intervalo_dias": 30,
             "corte_cohortes_hasta": "2026-10-02",
             "cohortes_retorno": [
-                {"ventana_dias": 30, "elegibles": 1, "retornaron": 1,
-                 "censurados": 1, "porcentaje": 100.0},
+                {"ventana_dias": 30, "elegibles": 0, "retornaron": 0,
+                 "censurados": 1, "porcentaje": None},
                 {"ventana_dias": 60, "elegibles": 0, "retornaron": 0,
-                 "censurados": 2, "porcentaje": None},
+                 "censurados": 1, "porcentaje": None},
             ],
         },
         "cobertura": {
@@ -121,8 +121,13 @@ def test_json_y_excel_conservan_mismo_corte_y_agregados():
 
     actividad = list(libro["Actividad clientes"].values)
     assert any(fila[:2] == ("2026-10", 2) for fila in actividad)
-    assert (30, 1, 1, 1, 100) in actividad
-    assert (60, 0, 0, 2, None) in actividad
+    assert (30, 0, 0, 1, None) in actividad
+    assert (60, 0, 0, 1, None) in actividad
+    assert all(
+        cohorte["elegibles"] + cohorte["censurados"]
+        == dato_json["resumen"]["primera_compra_observada_en_periodo"]
+        for cohorte in dato_json["actividad_clientes"]["cohortes_retorno"]
+    )
     assert _pares(libro["Resumen"])["clientes_compradores"] == (
         dato_json["resumen"]["clientes_compradores"]
     )
