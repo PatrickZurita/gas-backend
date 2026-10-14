@@ -1,7 +1,11 @@
 # BI-06 — rutas nominales solo en localhost
 
-**Estado:** código y pruebas sintéticas locales; sin consulta nominal a Neon,
-push ni despliegue. Estas rutas no cambian `/clientes`, `/pedidos` ni Flutter.
+**Estado:** código y pruebas sintéticas locales; el 2026-10-14 se consultaron
+listas reales y se prepararon ambos Excel con Neon `gas_readonly` en localhost.
+No se confirmó que Chrome guardara los archivos. Sin push ni despliegue.
+Estas rutas no cambian `/clientes`, `/pedidos` ni Flutter. Evidencia sin datos
+personales en la
+[validación nominal del workspace](../../docs/analytics/VALIDACION-NEON-NOMINAL-BI-06-2026-10-14.md).
 
 ## Contrato HTTP
 
@@ -41,7 +45,7 @@ anómalos no se convierten a cero. Textos que podrían ser fórmulas se escapan.
   guarda una referencia SHA-256 de `sub`, nunca `sub` en claro, token, cookie,
   alias, teléfono, domicilio ni contenido XLSX. La retención **provisional**
   es de 90 días; la limpieza ocurre al iniciar la siguiente solicitud. El
-  dueño debe confirmar la política antes de operar BI-06 con datos reales.
+  dueño confirmó 90 días para la validación local real de BI-06.
   Sin nuevas solicitudes no hay limpieza automática: el operador debe
   ejecutar su rutina local de retención o borrar la base al cerrar el piloto.
 - El resultado `prepared` significa que el backend preparó la respuesta XLSX
