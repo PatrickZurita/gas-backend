@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import time
 from datetime import date
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
+from app.api import bi as bi_api
 from app.core import bi_auth, bi_db
 from app.main import app
 from app.services import bi as bi_service
@@ -28,6 +31,10 @@ def clean_bi_config(monkeypatch):
 
 def _url():
     return "/bi/v1/corte?desde=2026-10-01&hasta=2026-10-02&peso_balon_kg=todos"
+
+
+def _xlsx_url(peso="todos"):
+    return f"/bi/v1/corte.xlsx?desde=2026-10-01&hasta=2026-10-02&peso_balon_kg={peso}"
 
 
 def _configurar(monkeypatch, roles=None):
@@ -139,6 +146,125 @@ def test_viewer_recibe_solo_agregados_con_filtros_explicitados(monkeypatch):
     assert cuerpo["n_pedidos_base"] == 0
     assert "clientes" not in cuerpo
     assert "pedidos" not in cuerpo
+
+
+def test_excel_requiere_identidad_y_permiso_de_exportacion(monkeypatch):
+    _configurar(monkeypatch)
+    cliente = TestClient(app)
+    sin_token = cliente.get(_xlsx_url())
+    assert sin_token.status_code == 401
+    assert sin_token.headers["cache-control"] == "no-store"
+
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token",
+        lambda *a, **k: _claims(),
+    )
+    viewer = cliente.get(_xlsx_url(), headers=_autorizacion())
+    assert viewer.status_code == 403
+    assert viewer.headers["cache-control"] == "no-store"
+    assert "content-disposition" not in viewer.headers
+
+
+def test_excel_falla_cerrado_sin_fuente_bi(monkeypatch):
+    _configurar(monkeypatch, {"sub-sintetico": "analyst"})
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token",
+        lambda *a, **k: _claims(),
+    )
+    respuesta = TestClient(app).get(_xlsx_url(), headers=_autorizacion())
+    assert respuesta.status_code == 503
+    assert respuesta.json()["detail"] == "Fuente BI no configurada."
+    assert respuesta.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("url", [_url(), _xlsx_url()])
+def test_errores_de_datos_no_filtran_contenido_privado(monkeypatch, url):
+    _configurar(monkeypatch, {"sub-sintetico": "analyst"})
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token",
+        lambda *a, **k: _claims(),
+    )
+    app.dependency_overrides[bi_db.get_bi_db] = lambda: object()
+
+    def fallar(*args, **kwargs):
+        raise ValueError("dato privado sintético")
+
+    monkeypatch.setattr(bi_api, "construir_corte", fallar)
+    respuesta = TestClient(app).get(url, headers=_autorizacion())
+    assert respuesta.status_code == 422
+    assert respuesta.json()["detail"] == "Filtros BI inválidos."
+    assert "dato privado" not in respuesta.text
+    assert respuesta.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("rol,peso", [("analyst", "todos"), ("owner", "10"), ("owner", "45")])
+def test_excel_agregado_reutiliza_filtros_y_metadatos(monkeypatch, rol, peso):
+    _configurar(monkeypatch, {"sub-sintetico": rol})
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token",
+        lambda *a, **k: _claims(),
+    )
+    monkeypatch.setattr(bi_service, "fecha_hoy_lima", lambda: date(2026, 10, 14))
+    monkeypatch.setattr(bi_service, "is_dynamodb_enabled", lambda: False)
+    monkeypatch.setattr(bi_service.repo_bi, "listar_activos_en_rango", lambda *a, **k: [])
+    monkeypatch.setattr(
+        bi_service.repo_bi, "listar_dias_activos_de_compradores", lambda *a, **k: [],
+    )
+    app.dependency_overrides[bi_db.get_bi_db] = lambda: object()
+    cliente = TestClient(app)
+    respuesta = cliente.get(_xlsx_url(peso), headers=_autorizacion())
+    assert respuesta.status_code == 200
+    assert respuesta.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    assert respuesta.headers["content-disposition"] == (
+        f'attachment; filename="gas-bi-2026-10-01_2026-10-02-{peso}.xlsx"'
+    )
+    assert respuesta.headers["cache-control"] == "no-store"
+    libro = load_workbook(BytesIO(respuesta.content), read_only=True, data_only=True)
+    assert libro.sheetnames == [
+        "Resumen", "Serie diaria", "Calendario diario", "Actividad clientes", "Metadatos",
+    ]
+    metadatos = dict(libro["Metadatos"].values)
+    assert metadatos["version_definiciones"] == "bi-v1.1"
+    assert metadatos["generado_en"] == respuesta.headers["x-bi-generado-en"]
+    assert metadatos["filtros.desde"] == "2026-10-01"
+    assert metadatos["filtros.hasta"] == "2026-10-02"
+    assert metadatos["filtros.peso_balon_kg"] == (
+        "todos" if peso == "todos" else int(peso)
+    )
+    assert metadatos["filtros.estado"] == "ACTIVO"
+    assert metadatos["n_pedidos_base"] == 0
+
+    json_respuesta = cliente.get(
+        _url().replace("peso_balon_kg=todos", f"peso_balon_kg={peso}"),
+        headers=_autorizacion(),
+    )
+    assert json_respuesta.status_code == 200
+    assert json_respuesta.json()["filtros"] == {
+        "desde": metadatos["filtros.desde"],
+        "hasta": metadatos["filtros.hasta"],
+        "peso_balon_kg": metadatos["filtros.peso_balon_kg"],
+        "estado": metadatos["filtros.estado"],
+    }
+    assert json_respuesta.json()["n_pedidos_base"] == metadatos["n_pedidos_base"]
+
+
+@pytest.mark.parametrize("query", [
+    "desde=2026-10-03&hasta=2026-10-01",
+    "desde=2025-01-01&hasta=2026-10-01",
+    "desde=2026-10-01&hasta=2026-10-02&peso_balon_kg=25",
+])
+def test_excel_rechaza_filtros_fuera_de_contrato(monkeypatch, query):
+    _configurar(monkeypatch, {"sub-sintetico": "analyst"})
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token",
+        lambda *a, **k: _claims(),
+    )
+    app.dependency_overrides[bi_db.get_bi_db] = lambda: object()
+    respuesta = TestClient(app).get(f"/bi/v1/corte.xlsx?{query}", headers=_autorizacion())
+    assert respuesta.status_code == 422
+    assert respuesta.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.parametrize("url", [
