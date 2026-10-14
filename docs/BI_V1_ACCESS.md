@@ -16,7 +16,9 @@ Excel agregado de cinco hojas desde el mismo cálculo `CorteBI`, en memoria y
 sin crear archivos. Responde con tipo MIME XLSX, `Content-Disposition:
 attachment` y un nombre basado solo en fechas y peso validados. El encabezado
 `X-BI-Generado-En` coincide con `generado_en` de la hoja `Metadatos`. No hay
-rutas nominales. Todas las respuestas BI llevan `Cache-Control: no-store`,
+rutas nominales publicadas: [BI-06 local](BI_V1_NOMINAL_LOCAL.md) añade rutas
+deshabilitadas por defecto, solo para `owner` en localhost, con auditoría
+SQLite privada obligatoria. Todas las respuestas BI llevan `Cache-Control: no-store`,
 incluidos los errores. Una consulta JSON y otra XLSX posteriores pueden tener
 distinto `generado_en` o datos si cambió la base entre solicitudes; no comparten
 snapshot entre peticiones.

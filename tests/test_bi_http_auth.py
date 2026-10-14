@@ -303,6 +303,7 @@ def test_barreras_rechazan_privilegio_escritura():
         "usuario": "gas_readonly", "usuario_sesion": "gas_readonly",
         "solo_lectura": "on", "aislamiento": "repeatable read",
         "pedidos_existe": True, "puede_leer": True,
+        "puede_leer_clientes": True, "puede_leer_direcciones": True,
         **{campo: False for campo in bi_db._PROHIBIDOS},
     }
     bi_db._exigir_barreras(base)

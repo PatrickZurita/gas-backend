@@ -19,13 +19,17 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 RolBI = Literal["viewer", "analyst", "owner"]
-PermisoBI = Literal["ver_agregados", "exportar_agregados"]
+PermisoBI = Literal[
+    "ver_agregados", "exportar_agregados", "ver_nominales", "exportar_nominales",
+]
 
 _BEARER = HTTPBearer(auto_error=False)
 _ROLES_VALIDOS = frozenset({"viewer", "analyst", "owner"})
 _PERMISOS: dict[PermisoBI, frozenset[RolBI]] = {
     "ver_agregados": frozenset({"viewer", "analyst", "owner"}),
     "exportar_agregados": frozenset({"analyst", "owner"}),
+    "ver_nominales": frozenset({"owner"}),
+    "exportar_nominales": frozenset({"owner"}),
 }
 _EMISORES_GOOGLE = frozenset({"accounts.google.com", "https://accounts.google.com"})
 

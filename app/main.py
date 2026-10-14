@@ -8,6 +8,7 @@ from app.api.pedidos import router as pedidos_router
 from app.api.reportes import router as reportes_router
 from app.api.stock import router as stock_router
 from app.api.bi import router as bi_router
+from app.api.bi_nominal import router as bi_nominal_router
 
 app = FastAPI(title="Gas Backend", version="0.1.0")
 
@@ -37,3 +38,4 @@ app.include_router(stock_router)
 app.include_router(catalogos_router)
 app.include_router(demanda_perdida_router)
 app.include_router(bi_router)
+app.include_router(bi_nominal_router)

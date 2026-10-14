@@ -21,6 +21,8 @@ SELECT current_user AS usuario, session_user AS usuario_sesion,
        current_setting('transaction_isolation') AS aislamiento,
        to_regclass('public.pedidos') IS NOT NULL AS pedidos_existe,
        has_table_privilege(current_user, 'public.pedidos', 'SELECT') AS puede_leer,
+       has_table_privilege(current_user, 'public.clientes', 'SELECT') AS puede_leer_clientes,
+       has_table_privilege(current_user, 'public.direcciones', 'SELECT') AS puede_leer_direcciones,
        has_table_privilege(current_user, 'public.pedidos', 'INSERT') AS puede_insertar,
        has_table_privilege(current_user, 'public.pedidos', 'UPDATE') AS puede_actualizar,
        has_table_privilege(current_user, 'public.pedidos', 'DELETE') AS puede_borrar,
@@ -75,6 +77,7 @@ def _exigir_barreras(estado) -> None:
         or estado["solo_lectura"] != "on"
         or estado["aislamiento"] != "repeatable read"
         or not estado["pedidos_existe"] or not estado["puede_leer"]
+        or not estado["puede_leer_clientes"] or not estado["puede_leer_direcciones"]
         or any(estado[campo] for campo in _PROHIBIDOS)
     ):
         raise HTTPException(status_code=503, detail="Fuente BI sin barreras de lectura.")
