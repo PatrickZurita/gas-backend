@@ -8,3 +8,4 @@ psycopg[binary]
 mangum
 tzdata
 boto3
+openpyxl==3.1.5
