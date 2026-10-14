@@ -1,6 +1,6 @@
 # Núcleo BI v1 (PostgreSQL)
 
-Estado: cálculo interno implementado; **sin ruta HTTP**. La proyección JSON y el exportador XLSX agregados existen localmente. Contrato de negocio: `../../docs/analytics/CONTRATO-BI-V1.md` en el workspace GAS.
+Estado: cálculo interno y ruta JSON agregada `GET /bi/v1/corte` implementados localmente; sin despliegue ni cifras actuales verificadas. El exportador XLSX agregado existe como función interna, sin ruta de descarga. Contrato de negocio: `../../docs/analytics/CONTRATO-BI-V1.md` en el workspace GAS.
 
 `app.services.bi.construir_corte(db, desde, hasta, peso_balon_kg=None)` devuelve un `CorteBI` tipado con `resumen`, `serie_diaria`, `calendario_diario`, `actividad_clientes`, `cobertura` y `avisos`. Acepta fechas inclusivas, peso `10`, `45` o todos, y hasta 366 días. Reutilizar este único corte para las representaciones JSON/Excel, preservando filtros y versión. Solo consulta pedidos activos en PostgreSQL; en DynamoDB falla de forma explícita. No abre conexión por sí mismo.
 
@@ -12,4 +12,4 @@ El repositorio lee identificadores de cliente para deduplicar y construir histor
 
 Montos total y pendiente usan centavos o fallback decimal legacy. Filas sin ambos importes válidos o con `pendiente > total` siguen contando como pedidos, compradores y balones, pero quedan excluidas de las sumas monetarias; `cobertura` cuenta faltantes, fallback y anomalías. El saldo es actual al consultar. El peso histórico de 10 kg puede ser un default de migración; el modelo no conserva su procedencia individual. `fecha_entrega` es día operativo registrado, no hora de demanda. Consultas sucesivas sin snapshot pueden variar si cambian pedidos.
 
-**Control de acceso pendiente:** `app.core.security.require_app_token` permite acceso cuando `APP_SHARED_TOKEN` no está configurado. No se considera un control obligatorio para BI privado. Antes de montar una ruta o descarga, definir autorización fail-closed en backend y aplicarla a cada endpoint; las respuestas nominales requieren además roles, paginación y auditoría. Este módulo no consulta producción ni contiene datos de clientes.
+**Acceso HTTP separado:** `app.core.bi_auth` verifica el token de ID Google y una lista permitida por `sub`; `app.core.bi_db` exige `BI_DATABASE_URL` del rol `gas_readonly`, TLS y barreras de solo lectura en una transacción `REPEATABLE READ READ ONLY`. `app.api.bi` solo expone el corte agregado a roles permitidos. Ninguna dependencia se monta en los routers móviles ni usa el token compartido opcional. Ver [acceso BI backend](BI_V1_ACCESS.md). La ruta no se ha consultado con producción; respuestas nominales y descargas siguen pendientes de permisos y auditoría propios.
