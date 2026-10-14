@@ -96,6 +96,14 @@ def test_corte_con_repositorio_real_agrega_ventas_y_deduplica_dias(db, monkeypat
     assert corte["actividad_clientes"]["intervalos_observados"] == 2
     assert corte["actividad_clientes"]["mediana_intervalo_dias"] == 16
     assert corte["actividad_clientes"]["clientes_con_cadencia_explorable"] == 1
+    assert corte["actividad_clientes"]["cadencia_clientes"] == {
+        "definicion": "mediana_de_intervalos_por_cliente_hasta_hasta_min_3_dias",
+        "clientes_elegibles": 1,
+        "intervalos_de_elegibles": 2,
+        "mediana_de_medianas_dias": 16,
+        "p25_medianas_dias": 16,
+        "p75_medianas_dias": 16,
+    }
     assert corte["cobertura"] == {
         "pedidos_monto_total_legacy": 1,
         "pedidos_pendiente_legacy": 1,
@@ -107,6 +115,12 @@ def test_corte_con_repositorio_real_agrega_ventas_y_deduplica_dias(db, monkeypat
         ("2026-10-01", 10, 2), ("2026-10-03", 10, 2), ("2026-10-03", 45, 1)
     ]
     assert sum(r["vendido_centavos"] for r in corte["serie_diaria"]) == resumen["vendido_centavos"]
+    assert [r["fecha"] for r in corte["calendario_diario"]] == [
+        "2026-10-01", "2026-10-02", "2026-10-03"
+    ]
+    assert corte["calendario_diario"][1]["pedidos_activos"] == 0
+    assert corte["calendario_diario"][1]["vendido_centavos"] == 0
+    assert sum(r["vendido_centavos"] for r in corte["calendario_diario"]) == resumen["vendido_centavos"]
     assert corte["actividad_clientes"]["meses"] == [{"mes": "2026-10", "clientes_compradores": 3}]
 
 
@@ -174,7 +188,7 @@ def test_montos_faltantes_y_anomalos_no_se_imputan_como_cero(monkeypatch):
     assert any("importes excluyen" in aviso for aviso in corte["avisos"])
 
 
-def test_periodo_sin_pedidos_conserva_filtros_y_sin_serie(db, monkeypatch):
+def test_periodo_sin_pedidos_conserva_filtros_y_calendario(db, monkeypatch):
     monkeypatch.setattr(bi, "fecha_hoy_lima", lambda: date(2026, 10, 13))
     corte = bi.construir_corte(db, desde=date(2026, 10, 1), hasta=date(2026, 10, 2))
     assert corte["filtros"]["desde"] == "2026-10-01"
@@ -182,5 +196,41 @@ def test_periodo_sin_pedidos_conserva_filtros_y_sin_serie(db, monkeypatch):
     assert corte["n_pedidos_base"] == 0
     assert corte["resumen"]["clientes_compradores"] == 0
     assert corte["serie_diaria"] == []  # La v1 no rellena días sin pedidos con ceros.
+    assert [(r["fecha"], r["pedidos_activos"]) for r in corte["calendario_diario"]] == [
+        ("2026-10-01", 0), ("2026-10-02", 0)
+    ]
     assert corte["actividad_clientes"]["meses"] == []
+    assert corte["actividad_clientes"]["cadencia_clientes"]["mediana_de_medianas_dias"] is None
     assert all(x["porcentaje"] is None for x in corte["actividad_clientes"]["cohortes_retorno"])
+
+
+def test_cadencia_por_cliente_evita_sobrepeso_de_comprador_frecuente(monkeypatch):
+    monkeypatch.setattr(bi, "fecha_hoy_lima", lambda: date(2026, 10, 14))
+    dias_cliente_1 = [date(2026, 9, dia) for dia in (1, 2, 3, 4, 5)]
+    dias_cliente_2 = [date(2026, 9, dia) for dia in (1, 11, 21)]
+    dias_cliente_3 = [date(2026, 9, dia) for dia in (1, 21)]
+    historia = [
+        *((1, dia) for dia in dias_cliente_1),
+        *((2, dia) for dia in dias_cliente_2),
+        *((3, dia) for dia in dias_cliente_3),
+    ]
+    pedidos = [
+        repo_bi.PedidoBI(cid, dia, 10, 1, 7000, Decimal("70"), 0, Decimal("0"))
+        for cid, dia in historia
+    ]
+    monkeypatch.setattr(bi.repo_bi, "listar_activos_en_rango", lambda *a, **k: pedidos)
+    monkeypatch.setattr(bi.repo_bi, "listar_dias_activos_de_compradores", lambda *a, **k: historia)
+    monkeypatch.setattr(bi, "is_dynamodb_enabled", lambda: False)
+    corte = bi.construir_corte(object(), desde=date(2026, 9, 1), hasta=date(2026, 9, 21))
+    actividad = corte["actividad_clientes"]
+    assert corte["version_definiciones"] == "bi-v1.1"
+    assert actividad["intervalos_observados"] == 7
+    assert actividad["mediana_intervalo_dias"] == 1  # Legacy: todos los intervalos agrupados.
+    assert actividad["cadencia_clientes"] == {
+        "definicion": "mediana_de_intervalos_por_cliente_hasta_hasta_min_3_dias",
+        "clientes_elegibles": 2,
+        "intervalos_de_elegibles": 6,
+        "mediana_de_medianas_dias": 5.5,
+        "p25_medianas_dias": 3.25,
+        "p75_medianas_dias": 7.75,
+    }

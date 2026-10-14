@@ -130,7 +130,9 @@ def _reconciliar(corte) -> dict:
     dato = json.loads(serializar_corte_json(corte))
     libro = load_workbook(BytesIO(exportar_xlsx_agregado(corte)), read_only=True)
     try:
-        if libro.sheetnames != ["Resumen", "Serie diaria", "Actividad clientes", "Metadatos"]:
+        if libro.sheetnames != [
+            "Resumen", "Serie diaria", "Calendario diario", "Actividad clientes", "Metadatos"
+        ]:
             raise ValueError("Hojas XLSX inesperadas")
         resumen_xlsx = dict(libro["Resumen"].values)
         metadatos_xlsx = dict(libro["Metadatos"].values)
@@ -153,6 +155,17 @@ def _reconciliar(corte) -> dict:
         serie_xlsx = [dict(zip(cabecera, fila)) for fila in filas]
         if serie_xlsx != dato["serie_diaria"]:
             raise ValueError("Serie JSON/XLSX difiere")
+        cabecera_calendario, *filas_calendario = list(libro["Calendario diario"].values)
+        calendario_xlsx = [
+            dict(zip(cabecera_calendario, fila)) for fila in filas_calendario
+        ]
+        if calendario_xlsx != dato["calendario_diario"]:
+            raise ValueError("Calendario JSON/XLSX difiere")
+        if len(calendario_xlsx) != (
+            date.fromisoformat(dato["filtros"]["hasta"])
+            - date.fromisoformat(dato["filtros"]["desde"])
+        ).days + 1:
+            raise ValueError("Calendario no cubre el rango completo")
         medidas = (
             "pedidos_activos", "balones_vendidos", "balones_10kg", "balones_45kg",
             "vendido_centavos", "pendiente_centavos", "cobrado_calculado_centavos",
@@ -163,6 +176,11 @@ def _reconciliar(corte) -> dict:
             for campo in medidas
         ):
             raise ValueError("Serie y resumen no reconcilian")
+        if any(
+            sum(fila[campo] for fila in calendario_xlsx) != dato["resumen"][campo]
+            for campo in medidas
+        ):
+            raise ValueError("Calendario y resumen no reconcilian")
         if dato["resumen"]["vendido_centavos"] != (
             dato["resumen"]["cobrado_calculado_centavos"]
             + dato["resumen"]["pendiente_centavos"]
@@ -191,6 +209,11 @@ def _reconciliar(corte) -> dict:
             for campo in metricas_actividad
         ):
             raise ValueError("Actividad JSON/XLSX difiere")
+        if any(
+            not any(fila[:2] == (campo, valor) for fila in filas_actividad)
+            for campo, valor in actividad["cadencia_clientes"].items()
+        ):
+            raise ValueError("Cadencia JSON/XLSX difiere")
         if any(
             not any(
                 fila[:2] == (mes["mes"], mes["clientes_compradores"])

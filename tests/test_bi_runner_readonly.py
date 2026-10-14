@@ -168,6 +168,20 @@ def test_runner_rechaza_cobertura_que_no_suma_poblacion():
         cli._reconciliar(corte)
 
 
+def test_runner_rechaza_calendario_incompleto():
+    corte = _corte_sintetico()
+    corte["calendario_diario"].pop()
+    with pytest.raises(ValueError, match="Calendario no cubre"):
+        cli._reconciliar(corte)
+
+
+def test_runner_rechaza_calendario_que_no_suma_resumen():
+    corte = _corte_sintetico()
+    corte["calendario_diario"][0]["pedidos_activos"] += 1
+    with pytest.raises(ValueError, match="Calendario y resumen"):
+        cli._reconciliar(corte)
+
+
 def test_runner_rechaza_denominador_incoherente_de_cohorte():
     corte = _corte_sintetico()
     corte["actividad_clientes"]["cohortes_retorno"][0]["censurados"] = 2

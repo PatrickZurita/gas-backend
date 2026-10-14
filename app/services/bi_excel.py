@@ -36,7 +36,7 @@ def _ancho(hoja, primera: int = 46, resto: int = 24) -> None:
 
 
 def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
-    """Genera cuatro hojas agregadas sin consultar DB ni guardar datos en disco.
+    """Genera hojas agregadas sin consultar DB ni guardar datos en disco.
 
     Los importes se conservan como centavos enteros. La fecha y la versión
     proceden del mismo corte recibido; no se crea otro corte al exportar.
@@ -63,6 +63,13 @@ def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
         _fila(serie, *(fila[campo] for campo in columnas_serie))
     _ancho(serie, primera=18)
 
+    calendario = libro.create_sheet("Calendario diario")
+    columnas_calendario = tuple(c for c in columnas_serie if c != "peso_balon_kg")
+    _encabezado(calendario, *columnas_calendario)
+    for fila in dato["calendario_diario"]:
+        _fila(calendario, *(fila[campo] for campo in columnas_calendario))
+    _ancho(calendario, primera=18)
+
     actividad = libro.create_sheet("Actividad clientes")
     _encabezado(actividad, "Métrica", "Valor")
     bloque = dato["actividad_clientes"]
@@ -85,6 +92,10 @@ def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
             cohorte["ventana_dias"], cohorte["elegibles"], cohorte["retornaron"],
             cohorte["censurados"], cohorte["porcentaje"],
         )
+    _fila(actividad)
+    _encabezado(actividad, "Cadencia por cliente", "Valor")
+    for campo, valor in bloque["cadencia_clientes"].items():
+        _fila(actividad, campo, valor)
     _ancho(actividad)
 
     metadatos = libro.create_sheet("Metadatos")
@@ -98,6 +109,8 @@ def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
         _fila(metadatos, "filtros." + campo, valor)
     for campo, valor in dato["cobertura"].items():
         _fila(metadatos, "cobertura." + campo, valor)
+    _fila(metadatos, "calendario_diario.definicion", "pedidos_activos_registrados_por_fecha_entrega")
+    _fila(metadatos, "calendario_diario.dias", len(dato["calendario_diario"]))
     for numero, aviso in enumerate(dato["avisos"], start=1):
         _fila(metadatos, f"aviso.{numero}", aviso)
     _ancho(metadatos)

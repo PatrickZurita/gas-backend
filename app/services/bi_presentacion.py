@@ -58,6 +58,10 @@ def proyectar_corte_agregado(corte: CorteBI) -> CorteBI:
             }
             for fila in corte["serie_diaria"]
         ],
+        "calendario_diario": [
+            {campo: fila[campo] for campo in ("fecha", *_MEDIDAS)}
+            for fila in corte["calendario_diario"]
+        ],
         "actividad_clientes": {
             "meses": [
                 {campo: fila[campo] for campo in ("mes", "clientes_compradores")}
@@ -66,6 +70,13 @@ def proyectar_corte_agregado(corte: CorteBI) -> CorteBI:
             "clientes_con_cadencia_explorable": actividad["clientes_con_cadencia_explorable"],
             "intervalos_observados": actividad["intervalos_observados"],
             "mediana_intervalo_dias": actividad["mediana_intervalo_dias"],
+            "cadencia_clientes": {
+                campo: actividad["cadencia_clientes"][campo]
+                for campo in (
+                    "definicion", "clientes_elegibles", "intervalos_de_elegibles",
+                    "mediana_de_medianas_dias", "p25_medianas_dias", "p75_medianas_dias",
+                )
+            },
             "corte_cohortes_hasta": actividad["corte_cohortes_hasta"],
             "cohortes_retorno": [
                 {

@@ -10,7 +10,7 @@ del contrato; `serializar_corte_json(corte)` produce UTF-8 y
 `exportar_xlsx_agregado(corte)` produce bytes XLSX en memoria. Las funciones de
 presentación no acceden a la base de datos ni calculan nuevamente las métricas.
 
-El libro tiene `Resumen`, `Serie diaria`, `Actividad clientes` y `Metadatos`.
+El libro tiene `Resumen`, `Serie diaria`, `Calendario diario`, `Actividad clientes` y `Metadatos`. Desde `bi-v1.1`, el calendario contiene todos los días del filtro con métricas agregadas entre pesos; los ceros significan que no hay pedidos activos **registrados** en ese día. La hoja de actividad conserva la mediana agrupada legacy y añade cadencia basada en una mediana por cliente elegible, con muestra y percentiles 25/75.
 Los importes se guardan como enteros en centavos. `Metadatos` registra versión,
 fecha de generación, zona horaria, fuente, fecha base, población, filtros,
 cobertura y avisos. En la hoja de actividad, un porcentaje de cohorte sin

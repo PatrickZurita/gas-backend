@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
-from statistics import median
+from statistics import median, quantiles
 from typing import TypedDict
 
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ from app.core.storage import is_dynamodb_enabled
 from app.core.time import LIMA_TZ, fecha_hoy_lima
 from app.infrastructure.repositories import bi as repo_bi
 
-VERSION_DEFINICIONES = "bi-v1.0"
+VERSION_DEFINICIONES = "bi-v1.1"
 RANGO_MAXIMO_DIAS = 366
 VENTANAS_RETORNO_DIAS = (30, 60, 90)
 
@@ -71,8 +71,18 @@ class ActividadClientesBI(TypedDict):
     clientes_con_cadencia_explorable: int
     intervalos_observados: int
     mediana_intervalo_dias: float | int | None
+    cadencia_clientes: CadenciaClientesBI
     corte_cohortes_hasta: str
     cohortes_retorno: list[CohorteRetornoBI]
+
+
+class CadenciaClientesBI(TypedDict):
+    definicion: str
+    clientes_elegibles: int
+    intervalos_de_elegibles: int
+    mediana_de_medianas_dias: float | int | None
+    p25_medianas_dias: float | int | None
+    p75_medianas_dias: float | int | None
 
 
 class CorteBI(TypedDict):
@@ -85,6 +95,7 @@ class CorteBI(TypedDict):
     n_pedidos_base: int
     resumen: ResumenBI
     serie_diaria: list[SerieDiariaBI]
+    calendario_diario: list[dict[str, str | int]]
     actividad_clientes: ActividadClientesBI
     cobertura: dict[str, int]
     avisos: list[str]
@@ -192,6 +203,39 @@ def construir_corte(
         for anterior, actual in zip(dias, dias[1:])
         if desde <= actual <= hasta
     ]
+    # Una mediana por comprador elegible evita que el comprador más frecuente
+    # pese más veces que los demás en el resumen de cadencia individual.
+    intervalos_elegibles = [
+        [(actual - anterior).days for anterior, actual in zip(dias, dias[1:])]
+        for dias in historia.values()
+        if len(dias) >= 3
+    ]
+    medianas_por_cliente = [median(valores) for valores in intervalos_elegibles]
+    if len(medianas_por_cliente) >= 2:
+        p25, _, p75 = quantiles(medianas_por_cliente, n=4, method="inclusive")
+    elif medianas_por_cliente:
+        p25 = p75 = medianas_por_cliente[0]
+    else:
+        p25 = p75 = None
+    cadencia_clientes: CadenciaClientesBI = {
+        "definicion": "mediana_de_intervalos_por_cliente_hasta_hasta_min_3_dias",
+        "clientes_elegibles": len(medianas_por_cliente),
+        "intervalos_de_elegibles": sum(map(len, intervalos_elegibles)),
+        "mediana_de_medianas_dias": (
+            median(medianas_por_cliente) if medianas_por_cliente else None
+        ),
+        "p25_medianas_dias": p25,
+        "p75_medianas_dias": p75,
+    }
+    serie_por_fecha: dict[date, dict[str, int]] = defaultdict(_medidas)
+    for (dia, _peso), medidas in serie.items():
+        for campo, valor in medidas.items():
+            serie_por_fecha[dia][campo] += valor
+    calendario_diario = [
+        {"fecha": (desde + timedelta(days=offset)).isoformat(),
+         **serie_por_fecha[desde + timedelta(days=offset)]}
+        for offset in range((hasta - desde).days + 1)
+    ]
     corte_cohortes = min(hasta, hoy_lima - timedelta(days=1))
     ventanas: list[CohorteRetornoBI] = []
     for w in VENTANAS_RETORNO_DIAS:
@@ -221,11 +265,14 @@ def construir_corte(
 
     avisos = [
         "fecha_entrega es el día operativo registrado; created_at no mide la hora de demanda.",
+        "La carga tardía puede asignar fecha_entrega al día de registro si el operador no la corrige.",
         "El saldo pendiente es el actual al consultar, no el saldo histórico al cierre del día.",
         "Primera compra observada puede omitir compras anteriores al sistema.",
         "El peso 10 kg histórico puede provenir del valor por defecto de una migración.",
         "La cifra exacta de pedidos con peso 10 kg heredado no se puede recuperar del modelo actual.",
         "Los intervalos cuentan retornos en el rango; la compra anterior puede ser previa a desde.",
+        "La mediana de intervalos es agrupada; cadencia_clientes usa una mediana por comprador elegible.",
+        "Los ceros del calendario indican ausencia de pedidos activos registrados, no ausencia de demanda real.",
         "Consultas sucesivas pueden cambiar por ediciones: este corte no garantiza snapshot atómico.",
     ]
     if cobertura["pedidos_sin_monto_valido"] or cobertura["pedidos_monetarios_anomalos"]:
@@ -260,16 +307,16 @@ def construir_corte(
             {"fecha": dia.isoformat(), "peso_balon_kg": peso, **medidas}
             for (dia, peso), medidas in sorted(serie.items())
         ],
+        "calendario_diario": calendario_diario,
         "actividad_clientes": {
             "meses": [
                 {"mes": mes, "clientes_compradores": len(ids)}
                 for mes, ids in sorted(clientes_mes.items())
             ],
-            "clientes_con_cadencia_explorable": sum(
-                len(dias) >= 3 for dias in historia.values()
-            ),
+            "clientes_con_cadencia_explorable": len(medianas_por_cliente),
             "intervalos_observados": len(intervalos),
             "mediana_intervalo_dias": median(intervalos) if intervalos else None,
+            "cadencia_clientes": cadencia_clientes,
             "corte_cohortes_hasta": corte_cohortes.isoformat(),
             "cohortes_retorno": ventanas,
         },
