@@ -199,7 +199,8 @@ def test_calidad_tabla_rechaza_cualquier_privilegio_de_escritura():
         base = {
             "tabla": tabla, "puede_leer": True, "puede_insertar": False,
             "puede_actualizar": False, "puede_borrar": False,
-            "puede_truncar": False,
+            "puede_truncar": False, "puede_referenciar": False,
+            "puede_crear_trigger": False,
         }
         return {**base, **cambios}
 

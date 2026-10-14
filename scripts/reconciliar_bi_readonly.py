@@ -38,6 +38,8 @@ SELECT current_user AS usuario, session_user AS usuario_sesion,
        has_table_privilege(current_user, 'public.pedidos', 'UPDATE') AS puede_actualizar,
        has_table_privilege(current_user, 'public.pedidos', 'DELETE') AS puede_borrar,
        has_table_privilege(current_user, 'public.pedidos', 'TRUNCATE') AS puede_truncar,
+       has_table_privilege(current_user, 'public.pedidos', 'REFERENCES') AS puede_referenciar,
+       has_table_privilege(current_user, 'public.pedidos', 'TRIGGER') AS puede_crear_trigger,
        has_schema_privilege(current_user, 'public', 'CREATE') AS crea_en_esquema,
        has_database_privilege(current_user, current_database(), 'CREATE') AS crea_en_base,
        r.rolsuper AS superusuario, r.rolcreaterole AS crea_roles,
@@ -53,7 +55,9 @@ SELECT c.relname AS tabla,
        has_table_privilege(current_user, c.oid, 'INSERT') AS puede_insertar,
        has_table_privilege(current_user, c.oid, 'UPDATE') AS puede_actualizar,
        has_table_privilege(current_user, c.oid, 'DELETE') AS puede_borrar,
-       has_table_privilege(current_user, c.oid, 'TRUNCATE') AS puede_truncar
+       has_table_privilege(current_user, c.oid, 'TRUNCATE') AS puede_truncar,
+       has_table_privilege(current_user, c.oid, 'REFERENCES') AS puede_referenciar,
+       has_table_privilege(current_user, c.oid, 'TRIGGER') AS puede_crear_trigger
 FROM pg_class AS c
 JOIN pg_namespace AS n ON n.oid = c.relnamespace
 WHERE n.nspname = 'public'
@@ -110,7 +114,8 @@ def _exigir_barreras(estado) -> None:
             estado[campo]
             for campo in (
                 "puede_insertar", "puede_actualizar", "puede_borrar",
-                "puede_truncar", "crea_en_esquema", "crea_en_base",
+                "puede_truncar", "puede_referenciar", "puede_crear_trigger",
+                "crea_en_esquema", "crea_en_base",
                 "superusuario", "crea_roles", "crea_bases", "omite_rls",
             )
         )
@@ -125,7 +130,8 @@ def _tablas_calidad_seguras(filas) -> set[str]:
         if fila["tabla"] in _TABLAS_CALIDAD
         and fila["puede_leer"]
         and not any(fila[campo] for campo in (
-            "puede_insertar", "puede_actualizar", "puede_borrar", "puede_truncar"
+            "puede_insertar", "puede_actualizar", "puede_borrar", "puede_truncar",
+            "puede_referenciar", "puede_crear_trigger",
         ))
     }
 
