@@ -7,7 +7,7 @@ from io import BytesIO
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from app.services.bi import CorteBI
+from app.services.bi import CorteBI, VENTANA_OBSERVACION_MENSUAL_DIAS
 from app.services.bi_presentacion import proyectar_corte_agregado
 
 
@@ -83,6 +83,15 @@ def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
     for mes in bloque["meses"]:
         _fila(actividad, mes["mes"], mes["clientes_compradores"])
     _fila(actividad)
+    columnas_continuidad = (
+        "mes", "compradores_del_mes", "volvieron_despues_del_mes_hasta_corte",
+        "sin_compra_posterior_hasta_corte", "dias_observacion_desde_fin_mes",
+        "ventana_observacion_incompleta", "mes_parcial_en_filtro",
+    )
+    _encabezado(actividad, *columnas_continuidad)
+    for mes in bloque["continuidad_mensual"]:
+        _fila(actividad, *(mes[campo] for campo in columnas_continuidad))
+    _fila(actividad)
     _encabezado(
         actividad, "ventana_dias", "elegibles", "retornaron", "censurados", "porcentaje"
     )
@@ -111,6 +120,10 @@ def exportar_xlsx_agregado(corte: CorteBI) -> bytes:
         _fila(metadatos, "cobertura." + campo, valor)
     _fila(metadatos, "calendario_diario.definicion", "pedidos_activos_registrados_por_fecha_entrega")
     _fila(metadatos, "calendario_diario.dias", len(dato["calendario_diario"]))
+    _fila(
+        metadatos, "continuidad_mensual.ventana_referencia_dias",
+        VENTANA_OBSERVACION_MENSUAL_DIAS,
+    )
     for numero, aviso in enumerate(dato["avisos"], start=1):
         _fila(metadatos, f"aviso.{numero}", aviso)
     _ancho(metadatos)

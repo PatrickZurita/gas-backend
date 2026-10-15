@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Annotated, Literal
 
@@ -13,10 +14,46 @@ from app.core.bi_db import get_bi_db
 from app.services.bi import CorteBI, construir_corte
 from app.services.bi_excel import exportar_xlsx_agregado
 from app.services.bi_presentacion import serializar_corte_json
+from app.services.bi_periodos import comparar_periodos
+from app.services.bi_semanal import comparar_semanas
 
 router = APIRouter(
     prefix="/bi/v1", tags=["bi"], dependencies=[Depends(require_bi_principal)],
 )
+
+
+@router.get("/comparacion-periodos")
+def comparacion_periodos(
+    granularidad: Literal["semana", "quincena", "mes"] = "semana",
+    peso_balon_kg: Literal["todos", "10", "45"] = "todos",
+    _principal: PrincipalBI = Depends(require_bi_permission("ver_agregados")),
+    db: Session = Depends(get_bi_db),
+) -> Response:
+    """Compare the latest two closed calendar periods in one read-only snapshot."""
+    resultado = comparar_periodos(
+        db, granularidad=granularidad,
+        peso_balon_kg=None if peso_balon_kg == "todos" else int(peso_balon_kg),
+    )
+    return Response(
+        content=json.dumps(resultado, ensure_ascii=False, allow_nan=False),
+        media_type="application/json", headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.get("/comparacion-semanal")
+def comparacion_semanal(
+    peso_balon_kg: Literal["todos", "10", "45"] = "todos",
+    _principal: PrincipalBI = Depends(require_bi_permission("ver_agregados")),
+    db: Session = Depends(get_bi_db),
+) -> Response:
+    """Two completed Lima weeks from one read-only database snapshot."""
+    resultado = comparar_semanas(
+        db, peso_balon_kg=None if peso_balon_kg == "todos" else int(peso_balon_kg),
+    )
+    return Response(
+        content=json.dumps(resultado, ensure_ascii=False, allow_nan=False),
+        media_type="application/json", headers={"Cache-Control": "no-store"},
+    )
 
 
 def _corte_desde_filtros(

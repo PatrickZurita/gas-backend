@@ -23,6 +23,12 @@ incluidos los errores. Una consulta JSON y otra XLSX posteriores pueden tener
 distinto `generado_en` o datos si cambió la base entre solicitudes; no comparten
 snapshot entre peticiones.
 
+El dueño confirmó que la ejecución local nominal BI-06 descargó
+`gas-bi-clientes.xlsx` y `gas-bi-pedidos.xlsx`. Esa confirmación no publica las
+rutas: siguen apagadas por defecto y restringidas a loopback con auditoría
+SQLite; ver [BI-06 local](BI_V1_NOMINAL_LOCAL.md). La descarga agregada sigue
+documentada por separado y su guardado en disco no está confirmado.
+
 ## Configuración privada requerida
 
 - `BI_GOOGLE_CLIENT_ID`: audiencia OAuth del token de ID que presenta el BFF.
@@ -49,3 +55,22 @@ prueba Google → BFF → backend en localhost mostró 403 antes del alta local 
 resumen/serie reales después, según confirmación del dueño. Falta revisión de
 TLS, revocación/expiración y despliegue. Reiniciar el proceso backend al rotar
 `BI_DATABASE_URL`, pues el pool está cacheado.
+
+# Lectura semanal local (BI-09)
+
+`GET /bi/v1/comparacion-semanal` exige Google y `ver_agregados`. Calcula las dos
+últimas semanas completas (lunes–domingo, `America/Lima`) con dos llamadas a
+`construir_corte` en la misma transacción BI `REPEATABLE READ READ ONLY`. Devuelve
+fechas, pedidos, balones y desglose 10/45 kg para cada semana, diferencia y
+porcentaje de balones si la semana anterior tiene denominador. `importes_comparables`
+solo es verdadero si ambas semanas tienen pedidos y cobertura monetaria total.
+El texto describe registros, sin atribuir causas ni inferir margen, caja o
+demanda total. Está implementado localmente; falta prueba real autorizada,
+revisión interpretativa y publicación.
+
+`GET /bi/v1/comparacion-periodos` exige el mismo token Google y permiso
+`ver_agregados` de la ruta semanal. Acepta `granularidad=semana|quincena|mes`
+y `peso_balon_kg=todos|10|45`, y responde JSON agregado con los últimos dos
+periodos calendario completos de Lima. Conserva `Cache-Control: no-store` y
+la lectura PostgreSQL `gas_readonly` en un snapshot por solicitud. El detalle
+de campos y límites de interpretación está en [núcleo BI v1](BI_V1_CORE.md).

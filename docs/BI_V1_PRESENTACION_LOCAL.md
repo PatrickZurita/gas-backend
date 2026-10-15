@@ -11,6 +11,7 @@ del contrato; `serializar_corte_json(corte)` produce UTF-8 y
 presentación no acceden a la base de datos ni calculan nuevamente las métricas.
 
 El libro tiene `Resumen`, `Serie diaria`, `Calendario diario`, `Actividad clientes` y `Metadatos`. Desde `bi-v1.1`, el calendario contiene todos los días del filtro con métricas agregadas entre pesos; los ceros significan que no hay pedidos activos **registrados** en ese día. La hoja de actividad conserva la mediana agrupada legacy y añade cadencia basada en una mediana por cliente elegible, con muestra y percentiles 25/75.
+La misma hoja incluye `continuidad_mensual`: compradores de cada mes filtrado, quienes compraron después de ese mes hasta el corte, quienes no tienen compra posterior registrada, días observables tras el fin de mes y marcas de ventana menor de 90 días y mes parcial en el filtro. `Metadatos` registra que 90 días es una referencia de observación, no un criterio de pérdida. Son agregados calculados una sola vez en `CorteBI`, sin nombres ni contactos.
 Los importes se guardan como enteros en centavos. `Metadatos` registra versión,
 fecha de generación, zona horaria, fuente, fecha base, población, filtros,
 cobertura y avisos. En la hoja de actividad, un porcentaje de cohorte sin

@@ -19,6 +19,7 @@ METODOS_PAGO_VALIDOS = {METODO_PAGO_EFECTIVO, METODO_PAGO_YAPE}
 class PedidoCreate(BaseModel):
     cliente_id: int | str
     fecha_entrega: date | None = None
+    registrar_ayer: bool = False
     cantidad_balones: int = Field(ge=1, le=20)
     total_soles: Decimal | None = Field(default=None, ge=0, decimal_places=2)
     tipo_balon: str = TIPO_BALON_NORMAL
@@ -34,6 +35,10 @@ class PedidoCreate(BaseModel):
 
     @model_validator(mode="after")
     def validar_contrato(self) -> "PedidoCreate":
+        if self.registrar_ayer and self.fecha_entrega is not None:
+            raise ValueError(
+                "registrar_ayer y fecha_entrega no se pueden enviar juntos"
+            )
         self.tipo_balon = self.tipo_balon.upper()
         self.marca_balon = self.marca_balon.upper()
 

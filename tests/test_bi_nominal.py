@@ -161,3 +161,59 @@ def test_limites_impiden_exportaciones_y_paginas_sin_cota(db, monkeypatch):
         exportar_xlsx_clientes_registrados({
             "metadatos": {"total_registros": 2}, "clientes": []
         })
+
+
+def test_pausas_clientes_ordenan_y_exigen_tres_dias_para_cadencia(db, monkeypatch):
+    monkeypatch.setattr(bi_nominal, "fecha_hoy_lima", lambda: date(2026, 10, 15))
+    db.execute(insert(Cliente), [
+        {"id": 3, "alias": "Recurrente", "telefono": "000-TEST-3"},
+        {"id": 4, "alias": "Anulado", "telefono": "000-TEST-4"},
+    ])
+    db.execute(insert(Direccion), [
+        {"id": 3, "cliente_id": 3, "texto_original": "Calle tres", "activa": True},
+        {"id": 4, "cliente_id": 4, "texto_original": "Calle cuatro", "activa": True},
+    ])
+    db.execute(insert(Pedido), [
+        {"id": 4, "cliente_id": 3, "direccion_id": 3,
+         "fecha_entrega": date(2026, 5, 21), "peso_balon_kg": 10,
+         "cantidad_balones": 1, "total_soles": Decimal("70.00"), "estado": "ACTIVO"},
+        {"id": 5, "cliente_id": 3, "direccion_id": 3,
+         "fecha_entrega": date(2026, 6, 1), "peso_balon_kg": 10,
+         "cantidad_balones": 1, "total_soles": Decimal("70.00"), "estado": "ACTIVO"},
+        {"id": 6, "cliente_id": 3, "direccion_id": 3,
+         "fecha_entrega": date(2026, 6, 21), "peso_balon_kg": 10,
+         "cantidad_balones": 1, "total_soles": Decimal("70.00"), "estado": "ACTIVO"},
+        {"id": 7, "cliente_id": 3, "direccion_id": 3,
+         "fecha_entrega": date(2026, 6, 21), "peso_balon_kg": 10,
+         "cantidad_balones": 1, "total_soles": Decimal("70.00"), "estado": "ACTIVO"},
+        {"id": 8, "cliente_id": 4, "direccion_id": 4,
+         "fecha_entrega": date(2026, 5, 22), "peso_balon_kg": 10,
+         "cantidad_balones": 1, "total_soles": Decimal("70.00"), "estado": "ANULADO"},
+    ])
+    db.flush()
+    pagina = bi_nominal.pagina_pausas_clientes(
+        db, desde=date(2026, 5, 1), hasta=date(2026, 10, 14), limit=1,
+    )
+    assert pagina["metadatos"]["total_registros"] == 2
+    assert pagina["filas"][0]["alias"] == "Recurrente"
+    assert pagina["filas"][0]["dias_sin_compra_registrada"] == 115
+    assert pagina["filas"][0]["dias_compra_observados"] == [
+        "2026-05-21", "2026-06-01", "2026-06-21",
+    ]
+    assert pagina["filas"][0]["cadencia_individual"] == {
+        "intervalos_observados": 2, "mediana_intervalo_dias": 15.5,
+        "intervalo_min_dias": 11, "intervalo_max_dias": 20,
+    }
+    segunda = bi_nominal.pagina_pausas_clientes(
+        db, desde=date(2026, 5, 1), hasta=date(2026, 10, 14),
+        offset=1, limit=1,
+    )
+    assert segunda["filas"][0]["cliente_id"] == 1
+    assert segunda["filas"][0]["cadencia_individual"] is None
+    filtrada = bi_nominal.pagina_pausas_clientes(
+        db, desde=date(2026, 5, 1), hasta=date(2026, 10, 14),
+        peso_balon_kg=45,
+    )
+    assert filtrada["metadatos"]["total_registros"] == 1
+    assert filtrada["filas"][0]["dias_compra_observados"] == ["2026-10-02"]
+    assert filtrada["filas"][0]["cadencia_individual"] is None

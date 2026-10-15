@@ -11,6 +11,14 @@ from app.infrastructure.repositories import stock as repo_stock
 from app.infrastructure.repositories._id_helpers import to_pg_id
 
 
+class StockNoDisponibleParaPedidoError(Exception):
+    """La jornada prevista se cerró o desapareció antes del descuento."""
+
+
+class PedidoRetroactivoStockCerradoError(Exception):
+    """La salida retrospectiva ya está en una jornada cerrada."""
+
+
 def _get_or_create_direccion_default(db: Session, cliente: Cliente) -> Direccion:
     stmt = (
         select(Direccion)
@@ -53,6 +61,8 @@ def crear_pedido(
     fecha_entrega: date,
     cantidad_balones: int,
     total_soles: Decimal,
+    fecha_stock: date | None = None,
+    exigir_salida_stock: bool = False,
     tipo_balon: str = "NORMAL",
     marca_balon: str = "PETROPERU",
     precio_unitario_centavos: int | None = None,
@@ -90,15 +100,25 @@ def crear_pedido(
 
         db.add(pedido)
         db.flush()
-        repo_stock.registrar_salida_pedido_si_jornada_existe(
+        salida = repo_stock.registrar_salida_pedido_si_jornada_existe(
             db,
-            fecha=fecha_entrega,
+            fecha=fecha_stock or fecha_entrega,
             cantidad_balones=cantidad_balones,
             pedido_id=pedido.id,
             marca_balon=marca_balon,
             tipo_balon=tipo_balon,
             peso_balon_kg=peso_balon_kg,
+            observacion=(
+                f"Pedido entregado el {fecha_entrega.isoformat()}, "
+                f"descontado del stock del {fecha_stock.isoformat()}"
+                if fecha_stock is not None and fecha_stock != fecha_entrega
+                else None
+            ),
         )
+        if exigir_salida_stock and salida is None:
+            raise StockNoDisponibleParaPedidoError(
+                "No hay una jornada abierta para descontar este pedido."
+            )
         db.commit()
         db.refresh(pedido)
         return pedido
@@ -134,9 +154,19 @@ def anular_pedido(
         pedido.anulado_at = datetime.now(timezone.utc)
         pedido.anulado_motivo = motivo
 
+        fecha_stock = (
+            repo_stock.obtener_fecha_salida_activa_pedido(db, pedido.id)
+            or pedido.fecha_entrega
+        )
+        if fecha_stock != pedido.fecha_entrega:
+            jornada_stock = repo_stock.obtener_jornada_por_fecha(db, fecha_stock)
+            if jornada_stock is None or jornada_stock.cerrado:
+                raise PedidoRetroactivoStockCerradoError(
+                    "El stock asociado ya está cerrado; concilia antes de anular."
+                )
         repo_stock.registrar_reversa_anulacion_si_jornada_existe(
             db,
-            fecha=pedido.fecha_entrega,
+            fecha=fecha_stock,
             cantidad_balones=pedido.cantidad_balones,
             pedido_id=pedido.id,
             marca_balon=pedido.marca_balon,
@@ -192,6 +222,10 @@ def patch_pedido(
 
         cantidad_vieja = pedido.cantidad_balones
         fecha_vieja = pedido.fecha_entrega
+        fecha_stock_vieja = (
+            repo_stock.obtener_fecha_salida_activa_pedido(db, pedido.id)
+            or fecha_vieja
+        )
         peso_viejo = pedido.peso_balon_kg
         marca_balon = pedido.marca_balon
         tipo_balon = pedido.tipo_balon
@@ -237,10 +271,18 @@ def patch_pedido(
             pass
 
         if stock_impactado:
+            if fecha_stock_vieja != fecha_vieja:
+                jornada_stock = repo_stock.obtener_jornada_por_fecha(
+                    db, fecha_stock_vieja
+                )
+                if jornada_stock is None or jornada_stock.cerrado:
+                    raise PedidoRetroactivoStockCerradoError(
+                        "El stock asociado ya está cerrado; concilia antes de editar."
+                    )
             # 1) Reversa por edicion en la jornada/peso anterior.
             repo_stock.registrar_reversa_anulacion_si_jornada_existe(
                 db,
-                fecha=fecha_vieja,
+                fecha=fecha_stock_vieja,
                 cantidad_balones=cantidad_vieja,
                 pedido_id=pedido.id,
                 marca_balon=marca_balon,
@@ -251,7 +293,11 @@ def patch_pedido(
             # 2) Nueva salida con la cantidad/fecha/peso actualizados.
             repo_stock.registrar_salida_pedido_si_jornada_existe(
                 db,
-                fecha=pedido.fecha_entrega,
+                fecha=(
+                    fecha_stock_vieja
+                    if fecha_stock_vieja != fecha_vieja
+                    else pedido.fecha_entrega
+                ),
                 cantidad_balones=pedido.cantidad_balones,
                 pedido_id=pedido.id,
                 marca_balon=pedido.marca_balon,

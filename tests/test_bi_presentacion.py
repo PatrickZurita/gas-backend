@@ -69,6 +69,14 @@ def _corte_sintetico():
         ],
         "actividad_clientes": {
             "meses": [{"mes": "2026-10", "clientes_compradores": 2}],
+            "continuidad_mensual": [
+                {"mes": "2026-10", "compradores_del_mes": 2,
+                 "volvieron_despues_del_mes_hasta_corte": 0,
+                 "sin_compra_posterior_hasta_corte": 2,
+                 "dias_observacion_desde_fin_mes": 0,
+                 "ventana_observacion_incompleta": True,
+                 "mes_parcial_en_filtro": True},
+            ],
             "clientes_con_cadencia_explorable": 1,
             "intervalos_observados": 2,
             "mediana_intervalo_dias": 30,
@@ -140,8 +148,8 @@ def test_json_y_excel_conservan_mismo_corte_y_agregados():
 
     actividad = list(libro["Actividad clientes"].values)
     assert any(fila[:2] == ("2026-10", 2) for fila in actividad)
-    assert (30, 0, 0, 1, None) in actividad
-    assert (60, 0, 0, 1, None) in actividad
+    assert (30, 0, 0, 1, None) in [fila[:5] for fila in actividad]
+    assert (60, 0, 0, 1, None) in [fila[:5] for fila in actividad]
     assert any(fila[:2] == ("mediana_de_medianas_dias", 30) for fila in actividad)
     assert all(
         cohorte["elegibles"] + cohorte["censurados"]

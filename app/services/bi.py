@@ -22,6 +22,7 @@ from app.infrastructure.repositories import bi as repo_bi
 VERSION_DEFINICIONES = "bi-v1.1"
 RANGO_MAXIMO_DIAS = 366
 VENTANAS_RETORNO_DIAS = (30, 60, 90)
+VENTANA_OBSERVACION_MENSUAL_DIAS = 90
 
 
 class FiltrosBI(TypedDict):
@@ -68,6 +69,7 @@ class ResumenBI(TypedDict):
 
 class ActividadClientesBI(TypedDict):
     meses: list[dict[str, str | int]]
+    continuidad_mensual: list[ContinuidadMensualBI]
     clientes_con_cadencia_explorable: int
     intervalos_observados: int
     mediana_intervalo_dias: float | int | None
@@ -83,6 +85,16 @@ class CadenciaClientesBI(TypedDict):
     mediana_de_medianas_dias: float | int | None
     p25_medianas_dias: float | int | None
     p75_medianas_dias: float | int | None
+
+
+class ContinuidadMensualBI(TypedDict):
+    mes: str
+    compradores_del_mes: int
+    volvieron_despues_del_mes_hasta_corte: int
+    sin_compra_posterior_hasta_corte: int
+    dias_observacion_desde_fin_mes: int
+    ventana_observacion_incompleta: bool
+    mes_parcial_en_filtro: bool
 
 
 class CorteBI(TypedDict):
@@ -237,6 +249,37 @@ def construir_corte(
         for offset in range((hasta - desde).days + 1)
     ]
     corte_cohortes = min(hasta, hoy_lima - timedelta(days=1))
+    continuidad_mensual: list[ContinuidadMensualBI] = []
+    primer_mes = date(desde.year, desde.month, 1)
+    mes_actual = primer_mes
+    while mes_actual <= hasta:
+        siguiente_mes = (
+            date(mes_actual.year + 1, 1, 1)
+            if mes_actual.month == 12
+            else date(mes_actual.year, mes_actual.month + 1, 1)
+        )
+        fin_mes = siguiente_mes - timedelta(days=1)
+        clave_mes = mes_actual.strftime("%Y-%m")
+        ids_mes = clientes_mes.get(clave_mes, set())
+        volvieron = sum(
+            any(dia > fin_mes for dia in historia[cliente_id])
+            for cliente_id in ids_mes
+        )
+        dias_observacion = max(0, (hasta - fin_mes).days)
+        continuidad_mensual.append(
+            {
+                "mes": clave_mes,
+                "compradores_del_mes": len(ids_mes),
+                "volvieron_despues_del_mes_hasta_corte": volvieron,
+                "sin_compra_posterior_hasta_corte": len(ids_mes) - volvieron,
+                "dias_observacion_desde_fin_mes": dias_observacion,
+                "ventana_observacion_incompleta": (
+                    dias_observacion < VENTANA_OBSERVACION_MENSUAL_DIAS
+                ),
+                "mes_parcial_en_filtro": desde > mes_actual or hasta < fin_mes,
+            }
+        )
+        mes_actual = siguiente_mes
     ventanas: list[CohorteRetornoBI] = []
     for w in VENTANAS_RETORNO_DIAS:
         elegibles = [
@@ -271,6 +314,8 @@ def construir_corte(
         "El peso 10 kg histórico puede provenir del valor por defecto de una migración.",
         "La cifra exacta de pedidos con peso 10 kg heredado no se puede recuperar del modelo actual.",
         "Los intervalos cuentan retornos en el rango; la compra anterior puede ser previa a desde.",
+        "La continuidad mensual incluye cualquier comprador del mes y observa compras posteriores hasta hasta; sin compra posterior no equivale a cliente perdido.",
+        "Una ventana mensual menor de 90 días o un mes parcial limita la comparación; no clasifica abandono.",
         "La mediana de intervalos es agrupada; cadencia_clientes usa una mediana por comprador elegible.",
         "Los ceros del calendario indican ausencia de pedidos activos registrados, no ausencia de demanda real.",
         "Consultas sucesivas pueden cambiar por ediciones: este corte no garantiza snapshot atómico.",
@@ -282,6 +327,9 @@ def construir_corte(
     if hasta == hoy_lima:
         avisos.append(
             "El día de hoy sigue abierto; cohortes completas se evalúan hasta ayer."
+        )
+        avisos.append(
+            "La continuidad mensual sí incluye las compras registradas hoy; el corte actual sigue abierto."
         )
 
     return {
@@ -313,6 +361,7 @@ def construir_corte(
                 {"mes": mes, "clientes_compradores": len(ids)}
                 for mes, ids in sorted(clientes_mes.items())
             ],
+            "continuidad_mensual": continuidad_mensual,
             "clientes_con_cadencia_explorable": len(medianas_por_cliente),
             "intervalos_observados": len(intervalos),
             "mediana_intervalo_dias": median(intervalos) if intervalos else None,

@@ -13,7 +13,7 @@ from app.core.bi_db import get_bi_db
 from app.core.bi_nominal_audit import AuditoriaNominal, iniciar_auditoria_nominal
 from app.services.bi import construir_corte
 from app.services.bi_nominal import (
-    pagina_clientes_registrados, pagina_pedidos,
+    pagina_clientes_registrados, pagina_pedidos, pagina_pausas_clientes,
     preparar_exportacion_clientes_registrados, preparar_exportacion_pedidos,
 )
 from app.services.bi_nominal_excel import (
@@ -103,6 +103,31 @@ def listar_pedidos_nominales(
                       filtros={"desde": desde.isoformat(), "hasta": hasta.isoformat(),
                                "peso_balon_kg": peso_balon_kg, "offset": offset,
                                "limit": limit}, filas=len(resultado["filas"]))
+    return resultado
+
+
+@router.get("/clientes/pausas")
+def listar_pausas_clientes(
+    desde: Annotated[date, Query()],
+    hasta: Annotated[date, Query()],
+    peso_balon_kg: Peso = "todos",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    auditoria: AuditoriaNominal = Depends(iniciar_auditoria_nominal),
+    principal: PrincipalBI = Depends(require_bi_permission("ver_nominales")),
+    db: Session = Depends(get_bi_db),
+) -> dict:
+    resultado = _snapshot(_pagina_o_422(
+        pagina_pausas_clientes, db, desde=desde, hasta=hasta,
+        peso_balon_kg=_peso(peso_balon_kg), offset=offset, limit=limit,
+    ))
+    auditoria.terminar(
+        "served", google_sub=principal.google_sub,
+        filtros={"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                 "peso_balon_kg": peso_balon_kg, "offset": offset,
+                 "limit": limit},
+        filas=len(resultado["filas"]),
+    )
     return resultado
 
 

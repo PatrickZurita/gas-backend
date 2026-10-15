@@ -9,7 +9,12 @@ from app.schemas.pedido import (
 )
 from app.services import pedidos as service_pedidos
 from app.services.errors import ClienteNoExisteError
-from app.services.pedidos import PedidoAnuladoNoEditableError, PedidoNoExisteError
+from app.services.pedidos import (
+    PedidoAnuladoNoEditableError,
+    PedidoNoExisteError,
+    PedidoRetroactivoStockCerradoError,
+    RegistroAyerSinStockError,
+)
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
@@ -20,6 +25,8 @@ def crear_pedido(payload: PedidoCreate, db: DbSession) -> PedidoOut:
         return service_pedidos.crear_pedido(db, payload)
     except ClienteNoExisteError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RegistroAyerSinStockError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[PedidoOut])
@@ -47,6 +54,8 @@ def anular_pedido(
         return service_pedidos.anular_pedido(db, pedido_id, motivo=motivo)
     except PedidoNoExisteError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PedidoRetroactivoStockCerradoError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.patch("/{pedido_id}", response_model=PedidoOut)
@@ -72,4 +81,6 @@ def patch_pedido(
     except PedidoNoExisteError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except PedidoAnuladoNoEditableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PedidoRetroactivoStockCerradoError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

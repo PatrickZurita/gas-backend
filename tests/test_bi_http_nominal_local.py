@@ -181,6 +181,26 @@ def test_paginas_owner_y_limites(acceso_local, datos_inventados):
     ]
 
 
+def test_pausas_owner_local_y_auditoria(acceso_local, datos_inventados, monkeypatch):
+    monkeypatch.setattr(bi_service, "fecha_hoy_lima", lambda: date(2026, 10, 15))
+    cliente = _cliente_web()
+    ruta = "/bi/v1/clientes/pausas?desde=2026-05-21&hasta=2026-10-14&limit=1"
+    assert cliente.get(ruta).status_code == 401
+    respuesta = cliente.get(ruta, headers=_auth())
+    assert respuesta.status_code == 200
+    assert respuesta.headers["cache-control"] == "no-store"
+    cuerpo = respuesta.json()
+    assert cuerpo["metadatos"]["poblacion"] == "compradores_del_periodo_con_pausa_observada"
+    assert cuerpo["metadatos"]["snapshot_garantizado"] is True
+    assert cuerpo["metadatos"]["total_registros"] == 1
+    assert cuerpo["filas"][0]["dias_compra_observados"] == ["2026-10-01", "2026-10-02"]
+    assert cuerpo["filas"][0]["cadencia_individual"] is None
+    assert [evento[1] for evento in _eventos(acceso_local)] == ["denied", "served"]
+    monkeypatch.setenv("BI_GOOGLE_SUB_ROLES", json.dumps({"sub-inventado": "viewer"}))
+    assert cliente.get(ruta, headers=_auth()).status_code == 403
+    assert _eventos(acceso_local)[-1][1] == "denied"
+
+
 def test_exports_owner_conciliados_y_escape_formula(acceso_local, datos_inventados):
     cliente = _cliente_web()
     clientes = cliente.post("/bi/v1/clientes/export", headers=_auth())

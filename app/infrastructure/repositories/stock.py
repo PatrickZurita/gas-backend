@@ -46,6 +46,37 @@ def listar_movimientos(db: Session, jornada_id: int) -> list[MovimientoStock]:
     return list(db.execute(stmt).scalars().all())
 
 
+def obtener_fecha_salida_activa_pedido(db: Session, pedido_id: int) -> date | None:
+    """Ubica la jornada con salida neta del pedido, incluso si difiere de su entrega.
+
+    Una edición genera reversa y nueva salida; se suman ambos movimientos
+    para encontrar el impacto físico aún vigente. Los pedidos anteriores sin
+    movimiento mantienen el comportamiento legacy del llamador.
+    """
+    movimientos = db.execute(
+        select(MovimientoStock)
+        .where(
+            MovimientoStock.pedido_id == pedido_id,
+            MovimientoStock.tipo.in_(
+                (TIPO_SALIDA_PEDIDO, TIPO_REVERSA_ANULACION)
+            ),
+        )
+        .order_by(MovimientoStock.id.asc())
+    ).scalars().all()
+    neto_por_fecha: dict[date, int] = {}
+    for movimiento in movimientos:
+        neto_por_fecha[movimiento.fecha] = (
+            neto_por_fecha.get(movimiento.fecha, 0)
+            + movimiento.cantidad_delta
+        )
+    fechas_activas = [
+        fecha for fecha, saldo in neto_por_fecha.items() if saldo < 0
+    ]
+    if len(fechas_activas) == 1:
+        return fechas_activas[0]
+    return None
+
+
 def iniciar_dia(
     db: Session,
     *,
@@ -214,6 +245,7 @@ def registrar_salida_pedido_si_jornada_existe(
     marca_balon: str | None = None,
     tipo_balon: str | None = None,
     peso_balon_kg: int | None = None,
+    observacion: str | None = None,
 ) -> MovimientoStock | None:
     jornada = obtener_jornada_por_fecha(db, fecha)
     if jornada is None or jornada.cerrado:
@@ -231,7 +263,7 @@ def registrar_salida_pedido_si_jornada_existe(
         marca_balon=marca_balon,
         tipo_balon=tipo_balon,
         peso_balon_kg=peso_balon_kg,
-        observacion="Salida por pedido",
+        observacion=observacion or "Salida por pedido",
     )
     db.add(movimiento)
     db.flush()

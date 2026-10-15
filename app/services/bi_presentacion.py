@@ -67,6 +67,19 @@ def proyectar_corte_agregado(corte: CorteBI) -> CorteBI:
                 {campo: fila[campo] for campo in ("mes", "clientes_compradores")}
                 for fila in actividad["meses"]
             ],
+            "continuidad_mensual": [
+                {
+                    campo: fila[campo]
+                    for campo in (
+                        "mes", "compradores_del_mes",
+                        "volvieron_despues_del_mes_hasta_corte",
+                        "sin_compra_posterior_hasta_corte",
+                        "dias_observacion_desde_fin_mes",
+                        "ventana_observacion_incompleta", "mes_parcial_en_filtro",
+                    )
+                }
+                for fila in actividad["continuidad_mensual"]
+            ],
             "clientes_con_cadencia_explorable": actividad["clientes_con_cadencia_explorable"],
             "intervalos_observados": actividad["intervalos_observados"],
             "mediana_intervalo_dias": actividad["mediana_intervalo_dias"],

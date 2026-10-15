@@ -8,6 +8,7 @@ algún día exponga estos datos. Por ahora solo se permite uso local autorizado.
 from __future__ import annotations
 
 from datetime import date, datetime
+from statistics import median
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -150,6 +151,62 @@ def pagina_clientes_registrados(
     )]
     return {"metadatos": _meta("clientes_registrados", total=total, filtros={}),
             "offset": offset, "limite": limit, "filas": filas}
+
+
+def pagina_pausas_clientes(
+    db: Session | None, *, desde: date, hasta: date,
+    peso_balon_kg: int | None = None, offset: int = 0, limit: int = 100,
+) -> dict[str, Any]:
+    """Ordena pausas observadas; no predice abandono ni próxima compra."""
+    db = _db_pg(db)
+    _validar_filtros(desde, hasta, peso_balon_kg)
+    _validar_pagina(offset, limit)
+    total, filas_db, dias_por_cliente = repo.pagina_pausas_clientes(
+        db, desde=desde, hasta=hasta, peso_balon_kg=peso_balon_kg,
+        offset=offset, limit=limit,
+    )
+    filas = []
+    for cliente in filas_db:
+        dias = dias_por_cliente[cliente.id]
+        if not dias or len(dias) != cliente.dias_compra:
+            raise RuntimeError("La historia de compras no coincide con el resumen")
+        intervalos = [(actual - anterior).days for anterior, actual in zip(dias, dias[1:])]
+        cadencia = None
+        if len(dias) >= 3:
+            cadencia = {
+                "intervalos_observados": len(intervalos),
+                "mediana_intervalo_dias": median(intervalos),
+                "intervalo_min_dias": min(intervalos),
+                "intervalo_max_dias": max(intervalos),
+            }
+        filas.append({
+            "cliente_id": cliente.id,
+            "alias": cliente.alias,
+            "telefono": cliente.telefono,
+            "primera_compra_observada": dias[0].isoformat(),
+            "ultima_compra_registrada": dias[-1].isoformat(),
+            "dias_sin_compra_registrada": (hasta - dias[-1]).days,
+            "dias_compra_observados": [dia.isoformat() for dia in dias],
+            "cadencia_individual": cadencia,
+        })
+    metadatos = _meta(
+        "compradores_del_periodo_con_pausa_observada", total=total,
+        filtros=_filtros_pedidos(desde, hasta, peso_balon_kg),
+    )
+    metadatos.pop("limite_exportacion")
+    metadatos["orden"] = "ultima_compra_registrada_asc_cliente_id_asc"
+    metadatos["fecha_corte"] = hasta.isoformat()
+    metadatos["estado_observacion"] = (
+        "dia_abierto" if hasta == fecha_hoy_lima() else "hasta_dia_cerrado"
+    )
+    metadatos["calidad_fecha"] = "fecha_entrega_registrada_sin_marca_de_carga_tardia"
+    metadatos["avisos"].extend([
+        "Sin compra posterior registrada no significa cliente perdido ni compra con competidor.",
+        "La historia observable puede comenzar después de la primera compra real del cliente.",
+        "La cadencia individual aparece solo desde tres días distintos de compra; no predice retorno.",
+        "La fecha operativa puede reflejar carga tardía; revisar el caso antes de contactar.",
+    ])
+    return {"metadatos": metadatos, "offset": offset, "limite": limit, "filas": filas}
 
 
 def preparar_exportacion_pedidos(

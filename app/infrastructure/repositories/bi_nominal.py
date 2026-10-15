@@ -36,6 +36,15 @@ class ClienteNominalDB(NamedTuple):
     canal_captacion: str | None
 
 
+class PausaClienteDB(NamedTuple):
+    id: int
+    alias: str
+    telefono: str
+    primera_compra: date
+    ultima_compra: date
+    dias_compra: int
+
+
 def _predicados_pedidos(desde: date, hasta: date, peso_balon_kg: int | None):
     condiciones = [
         Pedido.estado == "ACTIVO",
@@ -131,3 +140,61 @@ def listar_compradores(
         .limit(limit)
     )
     return [ClienteNominalDB(*fila) for fila in db.execute(stmt).all()]
+
+
+def _historia_pausas(desde: date, hasta: date, peso_balon_kg: int | None):
+    """Compradores del filtro, con historia activa observable hasta el corte."""
+    ids = select(Pedido.cliente_id).where(
+        *_predicados_pedidos(desde, hasta, peso_balon_kg)
+    )
+    condiciones = [
+        Pedido.estado == "ACTIVO", Pedido.fecha_entrega <= hasta,
+        Pedido.cliente_id.in_(ids),
+    ]
+    if peso_balon_kg is not None:
+        condiciones.append(Pedido.peso_balon_kg == peso_balon_kg)
+    return (
+        select(
+            Pedido.cliente_id.label("cliente_id"),
+            func.min(Pedido.fecha_entrega).label("primera_compra"),
+            func.max(Pedido.fecha_entrega).label("ultima_compra"),
+            func.count(func.distinct(Pedido.fecha_entrega)).label("dias_compra"),
+        )
+        .where(*condiciones)
+        .group_by(Pedido.cliente_id)
+        .subquery()
+    )
+
+
+def pagina_pausas_clientes(
+    db: Session, *, desde: date, hasta: date, peso_balon_kg: int | None,
+    offset: int, limit: int,
+) -> tuple[int, list[PausaClienteDB], dict[int, list[date]]]:
+    """Página estable por última compra ascendente y días únicos de esa página."""
+    historia = _historia_pausas(desde, hasta, peso_balon_kg)
+    total = int(db.scalar(select(func.count()).select_from(historia)) or 0)
+    stmt = (
+        select(
+            Cliente.id, Cliente.alias, Cliente.telefono,
+            historia.c.primera_compra, historia.c.ultima_compra,
+            historia.c.dias_compra,
+        )
+        .join(historia, historia.c.cliente_id == Cliente.id)
+        .order_by(historia.c.ultima_compra, Cliente.id)
+        .offset(offset).limit(limit)
+    )
+    filas = [PausaClienteDB(*fila) for fila in db.execute(stmt).all()]
+    ids_pagina = [fila.id for fila in filas]
+    if not ids_pagina:
+        return total, filas, {}
+    dias_stmt = select(Pedido.cliente_id, Pedido.fecha_entrega).where(
+        Pedido.estado == "ACTIVO", Pedido.fecha_entrega <= hasta,
+        Pedido.cliente_id.in_(ids_pagina),
+    )
+    if peso_balon_kg is not None:
+        dias_stmt = dias_stmt.where(Pedido.peso_balon_kg == peso_balon_kg)
+    dias_stmt = dias_stmt.distinct().order_by(Pedido.cliente_id, Pedido.fecha_entrega)
+    dias: dict[int, list[date]] = {cliente_id: [] for cliente_id in ids_pagina}
+    for cliente_id, fecha in db.execute(dias_stmt).all():
+        dias[cliente_id].append(fecha)
+    return total, filas, dias

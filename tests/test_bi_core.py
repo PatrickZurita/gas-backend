@@ -234,3 +234,36 @@ def test_cadencia_por_cliente_evita_sobrepeso_de_comprador_frecuente(monkeypatch
         "p25_medianas_dias": 3.25,
         "p75_medianas_dias": 7.75,
     }
+
+
+def test_continuidad_mensual_reconcilia_volvieron_y_no_registraron(monkeypatch):
+    monkeypatch.setattr(bi, "fecha_hoy_lima", lambda: date(2026, 10, 15))
+    eventos = [
+        (1, date(2026, 5, 21)), (2, date(2026, 5, 25)),
+        (1, date(2026, 7, 2)), (3, date(2026, 7, 3)),
+        (3, date(2026, 8, 8)),
+    ]
+    pedidos = [
+        repo_bi.PedidoBI(cid, dia, 10, 1, 7000, Decimal("70"), 0, Decimal("0"))
+        for cid, dia in eventos
+    ]
+    monkeypatch.setattr(bi.repo_bi, "listar_activos_en_rango", lambda *a, **k: pedidos)
+    monkeypatch.setattr(bi.repo_bi, "listar_dias_activos_de_compradores", lambda *a, **k: eventos)
+    monkeypatch.setattr(bi, "is_dynamodb_enabled", lambda: False)
+    corte = bi.construir_corte(object(), desde=date(2026, 5, 21), hasta=date(2026, 8, 31))
+    filas = corte["actividad_clientes"]["continuidad_mensual"]
+    assert [fila["mes"] for fila in filas] == ["2026-05", "2026-06", "2026-07", "2026-08"]
+    assert filas[0]["compradores_del_mes"] == 2
+    assert filas[0]["volvieron_despues_del_mes_hasta_corte"] == 1
+    assert filas[0]["sin_compra_posterior_hasta_corte"] == 1
+    assert filas[0]["mes_parcial_en_filtro"] is True
+    assert filas[1]["compradores_del_mes"] == 0
+    assert filas[2]["compradores_del_mes"] == 2
+    assert filas[2]["volvieron_despues_del_mes_hasta_corte"] == 1
+    assert filas[3]["dias_observacion_desde_fin_mes"] == 0
+    assert filas[3]["ventana_observacion_incompleta"] is True
+    assert all(
+        f["volvieron_despues_del_mes_hasta_corte"]
+        + f["sin_compra_posterior_hasta_corte"] == f["compradores_del_mes"]
+        for f in filas
+    )

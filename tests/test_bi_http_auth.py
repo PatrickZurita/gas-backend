@@ -82,6 +82,55 @@ def test_sin_token_y_token_invalido(monkeypatch):
     assert respuesta.headers["cache-control"] == "no-store"
 
 
+def test_comparacion_periodos_requiere_identidad_y_reutiliza_filtros(monkeypatch):
+    _configurar(monkeypatch)
+    url = "/bi/v1/comparacion-periodos?granularidad=mes&peso_balon_kg=45"
+    cliente = TestClient(app)
+    assert cliente.get(url).status_code == 401
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token", lambda *a, **k: _claims(),
+    )
+    app.dependency_overrides[bi_db.get_bi_db] = lambda: object()
+    recibido = []
+
+    def comparar(db, *, granularidad, peso_balon_kg):
+        recibido.append((granularidad, peso_balon_kg))
+        return {"granularidad": granularidad, "peso_balon_kg": peso_balon_kg}
+
+    monkeypatch.setattr(bi_api, "comparar_periodos", comparar)
+    respuesta = cliente.get(url, headers=_autorizacion())
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {"granularidad": "mes", "peso_balon_kg": 45}
+    assert respuesta.headers["cache-control"] == "no-store"
+    assert recibido == [("mes", 45)]
+    assert cliente.get(
+        "/bi/v1/comparacion-periodos?granularidad=dia", headers=_autorizacion(),
+    ).status_code == 422
+
+
+def test_comparacion_semanal_bi09_requiere_identidad_y_filtro(monkeypatch):
+    _configurar(monkeypatch)
+    url = "/bi/v1/comparacion-semanal?peso_balon_kg=10"
+    cliente = TestClient(app)
+    assert cliente.get(url).status_code == 401
+    monkeypatch.setattr(
+        bi_auth.google_id_token, "verify_oauth2_token", lambda *a, **k: _claims(),
+    )
+    app.dependency_overrides[bi_db.get_bi_db] = lambda: object()
+    recibido = []
+
+    def comparar(db, *, peso_balon_kg):
+        recibido.append(peso_balon_kg)
+        return {"peso_balon_kg": peso_balon_kg}
+
+    monkeypatch.setattr(bi_api, "comparar_semanas", comparar)
+    respuesta = cliente.get(url, headers=_autorizacion())
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {"peso_balon_kg": 10}
+    assert respuesta.headers["cache-control"] == "no-store"
+    assert recibido == [10]
+
+
 @pytest.mark.parametrize("cambios", [
     {"iss": "https://otro.example"},
     {"aud": "otro-cliente"},

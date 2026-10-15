@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date as date_cls
 from datetime import datetime
+from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from typing import TYPE_CHECKING
 
@@ -51,6 +52,10 @@ def _resolve_monto_pendiente_centavos(
     return 0 if payload.pagado else monto_total_centavos
 
 
+class RegistroAyerSinStockError(Exception):
+    """No se puede cargar ayer sin una jornada donde descontar stock."""
+
+
 def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
     monto_total_centavos = _resolve_monto_total_centavos(payload)
     precio_unitario_centavos = (
@@ -61,9 +66,18 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
     monto_pendiente_centavos = _resolve_monto_pendiente_centavos(
         payload, monto_total_centavos
     )
-    fecha_entrega = payload.fecha_entrega or fecha_hoy_lima()
+    hoy = fecha_hoy_lima()
+    fecha_entrega = (
+        hoy - timedelta(days=1)
+        if payload.registrar_ayer
+        else payload.fecha_entrega or hoy
+    )
 
     if is_dynamodb_enabled():
+        if payload.registrar_ayer:
+            raise RegistroAyerSinStockError(
+                "Registrar pedidos de ayer requiere stock transaccional PostgreSQL."
+            )
         from app.infrastructure.dynamodb.repositories import (
             clientes as ddb_clientes,
         )
@@ -135,11 +149,30 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
 
     from app.infrastructure.repositories import clientes as repo_clientes
     from app.infrastructure.repositories import pedidos as repo_pedidos
+    from app.infrastructure.repositories import stock as repo_stock
 
     session = _require_db(db)
     cliente = repo_clientes.obtener_cliente(session, payload.cliente_id)
     if cliente is None:
         raise ClienteNoExisteError("Cliente no existe")
+
+    fecha_stock = fecha_entrega
+    if payload.registrar_ayer:
+        jornada_hoy = repo_stock.obtener_jornada_por_fecha(session, hoy)
+        if jornada_hoy is not None:
+            if jornada_hoy.cerrado:
+                raise RegistroAyerSinStockError(
+                    "El stock de hoy está cerrado; no se puede descontar el pedido."
+                )
+            fecha_stock = hoy
+        else:
+            jornada_ayer = repo_stock.obtener_jornada_por_fecha(
+                session, fecha_entrega
+            )
+            if jornada_ayer is None or jornada_ayer.cerrado:
+                raise RegistroAyerSinStockError(
+                    "Inicia el stock de hoy para registrar pedidos olvidados de ayer."
+                )
 
     total_soles = (
         payload.total_soles
@@ -152,23 +185,28 @@ def crear_pedido(db: "Session | None", payload: PedidoCreate) -> PedidoOut:
         else _centavos_a_soles(monto_pendiente_centavos)
     )
 
-    pedido = repo_pedidos.crear_pedido(
-        db=session,
-        cliente=cliente,
-        fecha_entrega=fecha_entrega,
-        cantidad_balones=payload.cantidad_balones,
-        total_soles=total_soles,
-        tipo_balon=payload.tipo_balon,
-        marca_balon=payload.marca_balon,
-        precio_unitario_centavos=precio_unitario_centavos,
-        monto_total_centavos=monto_total_centavos,
-        pagado=payload.pagado,
-        saldo_pendiente=saldo_pendiente,
-        monto_pendiente_centavos=monto_pendiente_centavos,
-        observacion=payload.observacion,
-        peso_balon_kg=payload.peso_balon_kg,
-        metodo_pago=payload.metodo_pago,
-    )
+    try:
+        pedido = repo_pedidos.crear_pedido(
+            db=session,
+            cliente=cliente,
+            fecha_entrega=fecha_entrega,
+            fecha_stock=fecha_stock,
+            exigir_salida_stock=payload.registrar_ayer,
+            cantidad_balones=payload.cantidad_balones,
+            total_soles=total_soles,
+            tipo_balon=payload.tipo_balon,
+            marca_balon=payload.marca_balon,
+            precio_unitario_centavos=precio_unitario_centavos,
+            monto_total_centavos=monto_total_centavos,
+            pagado=payload.pagado,
+            saldo_pendiente=saldo_pendiente,
+            monto_pendiente_centavos=monto_pendiente_centavos,
+            observacion=payload.observacion,
+            peso_balon_kg=payload.peso_balon_kg,
+            metodo_pago=payload.metodo_pago,
+        )
+    except repo_pedidos.StockNoDisponibleParaPedidoError as exc:
+        raise RegistroAyerSinStockError(str(exc)) from exc
     return PedidoOut.model_validate(pedido, from_attributes=True)
 
 
@@ -245,6 +283,10 @@ class PedidoAnuladoNoEditableError(Exception):
     """Intento de editar pedido anulado (409)."""
 
 
+class PedidoRetroactivoStockCerradoError(Exception):
+    """Se intentó modificar stock retrospectivo ya cerrado (409)."""
+
+
 def anular_pedido(
     db: "Session | None",
     pedido_id: int | str,
@@ -268,7 +310,10 @@ def anular_pedido(
     if pg_id is None or session.get(PedidoModel, pg_id) is None:
         raise PedidoNoExisteError(f"Pedido {pedido_id} no existe")
 
-    pedido = repo_pedidos.anular_pedido(session, pg_id, motivo=motivo)
+    try:
+        pedido = repo_pedidos.anular_pedido(session, pg_id, motivo=motivo)
+    except repo_pedidos.PedidoRetroactivoStockCerradoError as exc:
+        raise PedidoRetroactivoStockCerradoError(str(exc)) from exc
     return PedidoOut.model_validate(pedido, from_attributes=True)
 
 
@@ -324,6 +369,8 @@ def patch_pedido(
         )
     except repo_pedidos.PedidoAnuladoEditableError as exc:
         raise PedidoAnuladoNoEditableError(str(exc)) from exc
+    except repo_pedidos.PedidoRetroactivoStockCerradoError as exc:
+        raise PedidoRetroactivoStockCerradoError(str(exc)) from exc
 
     return PedidoOut.model_validate(pedido, from_attributes=True)
 
