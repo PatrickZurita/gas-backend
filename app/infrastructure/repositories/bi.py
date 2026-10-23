@@ -21,6 +21,8 @@ class PedidoBI(NamedTuple):
     total_soles: Decimal | None
     monto_pendiente_centavos: int | None
     saldo_pendiente: Decimal | None
+    pedido_id: int = 0
+    direccion_id: int = 0
 
 
 def listar_activos_en_rango(
@@ -35,6 +37,8 @@ def listar_activos_en_rango(
         Pedido.total_soles,
         Pedido.monto_pendiente_centavos,
         Pedido.saldo_pendiente,
+        Pedido.id,
+        Pedido.direccion_id,
     ).where(
         Pedido.estado == "ACTIVO",
         Pedido.fecha_entrega >= desde,

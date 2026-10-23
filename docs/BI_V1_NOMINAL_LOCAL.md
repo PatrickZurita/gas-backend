@@ -19,6 +19,8 @@ la auditoría disponible. `viewer` y `analyst` reciben 403. `GET` responde JSON;
 | `GET /bi/v1/clientes` | `offset=0..1000000`, `limit=1..200` (100 por defecto) | Catálogo de clientes registrados: `metadatos`, `offset`, `limite`, `filas`. |
 | `GET /bi/v1/pedidos` | `desde`, `hasta`, `peso_balon_kg=todos|10|45`, `offset`, `limit` | Pedidos activos por fecha de entrega registrada, más `cobertura_pagina`. |
 | `GET /bi/v1/clientes/pausas` | `desde`, `hasta`, `peso_balon_kg=todos|10|45`, `offset`, `limit` | Compradores del rango, ordenados por última compra registrada más antigua, con historia observable hasta el corte. |
+| `GET /bi/v1/clientes/historicos` | `fecha_corte`, `peso_balon_kg=todos|10|45`, `segmento=todos|compra_unica_antigua|recurrente_pausa_larga|recurrente_pausa_relativa|sin_senal_prioritaria`, `offset`, `limit` | Todos los compradores activos observados desde 21-may-2026 hasta el corte, incluidos quienes no compraron en un rango reciente. Solo revisión humana `owner`. |
+| `GET /bi/v1/geo/direcciones-pendientes` | `desde`, `hasta`, `peso_balon_kg=todos|10|45`, `estado=todos|NO_GEOCODIFICADO|SIN_RESULTADO|RECHAZADO_PRECISION|RECHAZADO_BOUNDS|PENDIENTE_DUENO|SIN_H3`, `offset`, `limit` | Direcciones con pedidos activos sin H3, agrupadas y priorizadas por pedidos afectados. Revisión humana `owner`; no escribe ni geocodifica. |
 | `POST /bi/v1/clientes/export` | Sin cuerpo ni filtros | Excel de clientes registrados, máximo 5.000. |
 | `POST /bi/v1/pedidos/export` | `desde`, `hasta`, `peso_balon_kg` **en query**, sin cuerpo | Excel de pedidos activos y compradores, máximo 5.000 pedidos. |
 
@@ -46,6 +48,52 @@ El orden es `ultima_compra_registrada` ascendente y `cliente_id` ascendente;
 no etiqueta abandono, no predice próxima compra y no distingue pedidos
 cargados tarde sin evidencia por fila. Por contener datos personales, conserva
 la puerta local, `owner`, auditoría y `Cache-Control: no-store` de BI-06.
+
+`clientes/historicos` también es JSON paginado y usa un único snapshot de
+lectura por solicitud. `metadatos.denominadores.compradores_observados` cuenta
+todos los compradores con pedido activo entre 21-may-2026 y `fecha_corte`, con
+el peso indicado; `por_segmento` es una partición exhaustiva de ese total y
+`por_banda_dias` agrupa la pausa en `0_29`, `30_59`, `60_89`, `90_119`,
+`120_mas`. `total_registros` cuenta el segmento solicitado antes de paginar.
+`con_telefono` y `sin_telefono` describen cobertura nominal de ese universo,
+no permiso de contacto. Las filas se ordenan por días sin compra descendentes
+y `cliente_id` ascendente. Devuelven alias y teléfono bajo el mismo permiso
+`owner`, fecha primera y última observada, días de compra distintos, banda,
+segmento y cadencia individual solo con >=3 días y >=2 intervalos.
+
+La regla de revisión es: compra única antigua = un día y pausa >=120 días;
+recurrente con pausa larga = >=2 días y pausa >=120; recurrente con pausa
+relativa = >=3 días y pausa >=máximo(30, dos veces su mediana individual),
+siempre que no sea ya pausa larga. El resto es `sin_senal_prioritaria`.
+Estas categorías son excluyentes. El historial anterior al 21-may no es
+observable; tampoco hay marca fiable de carga tardía por fila. El día actual
+se rotula abierto. Ninguna categoría demuestra abandono ni dispara contacto.
+
+`geo/direcciones-pendientes` usa los mismos pedidos activos y la misma fuente
+GEO efectiva que `corte-territorio`: cache local Google temporal si está
+disponible; si no, la tabla de resultados temporales con permiso SELECT. Ambas
+consultas son solicitudes independientes, por lo que su snapshot puede diferir
+si cambian pedidos o vence el cache entre ellas. Dentro de cada solicitud, la
+lista, los denominadores y la página se calculan en un solo snapshot
+`REPEATABLE READ READ ONLY`. Si falta la fuente GEO, falla cerrado con 503.
+No llama a Google ni guarda puntos o resultados nuevos.
+
+`metadatos.denominadores` incluye pedidos activos, con H3, sin H3, direcciones
+pendientes y compradores afectados, más particiones por estado de direcciones
+y pedidos. `total_registros` cuenta direcciones después del filtro `estado`,
+antes de paginar. Cada fila agrupa un `direccion_id` y expone, solo al dueño,
+`cliente_id`, `alias_cliente`, `texto_original`, `distrito`, `referencia`,
+`estado_geo`, `motivo_tecnico`, compradores distintos, pedidos y balones
+afectados y la primera/última
+entrega registrada del rango. Se ordena por pedidos, balones e ID de dirección.
+Si varios compradores usaron el mismo `direccion_id`, `cliente_id` y
+`alias_cliente` son `null` para no atribuirla a uno de ellos.
+`SIN_H3` cubre geocoding OK sin H3, por ejemplo precisión LOW. Un resultado
+ausente, vencido o con texto modificado se presenta como `NO_GEOCODIFICADO`
+con `motivo_tecnico` distinto. Un alias o apodo **no se diagnostica** por
+heurística; requiere revisión humana posterior. Los pedidos con H3 en celdas
+suprimidas por privacidad no entran en esta cola. La corrección de direcciones
+en producción queda fuera de este endpoint y se pospone para el tramo final.
 
 ## Puerta local y auditoría
 

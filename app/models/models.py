@@ -71,6 +71,44 @@ class Direccion(Base):
     )
 
 
+class ResultadoGeoTemporal(Base):
+    """Resultado privado con vencimiento; nunca se envía nominalmente a GAS Web."""
+
+    __tablename__ = "resultados_geo_temporales"
+    __table_args__ = (
+        CheckConstraint(
+            "estado IN ('OK', 'SIN_RESULTADO', 'RECHAZADO_BOUNDS', "
+            "'RECHAZADO_PRECISION', 'PENDIENTE_DUENO')",
+            name="ck_geo_temporal_estado",
+        ),
+        CheckConstraint(
+            "(estado = 'OK' AND precision IN ('HIGH', 'MEDIUM', 'LOW')) "
+            "OR (estado <> 'OK' AND precision IS NULL)",
+            name="ck_geo_temporal_precision",
+        ),
+        CheckConstraint(
+            "expira_en > geocodificado_en AND "
+            "expira_en <= geocodificado_en + INTERVAL '29 days'",
+            name="ck_geo_temporal_vencimiento",
+        ),
+    )
+
+    direccion_id: Mapped[int] = mapped_column(
+        ForeignKey("direcciones.id", ondelete="CASCADE"), primary_key=True,
+    )
+    texto_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    estado: Mapped[str] = mapped_column(String(24), nullable=False)
+    precision: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    h3_res9: Mapped[str | None] = mapped_column(String(15), nullable=True)
+    proveedor: Mapped[str] = mapped_column(String(20), nullable=False)
+    geocodificado_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    expira_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True,
+    )
+
+
 class Pedido(Base):
     __tablename__ = "pedidos"
     __table_args__ = (

@@ -16,6 +16,8 @@ from app.services.bi_nominal import (
     pagina_clientes_registrados, pagina_pedidos, pagina_pausas_clientes,
     preparar_exportacion_clientes_registrados, preparar_exportacion_pedidos,
 )
+from app.services.bi_historicos import pagina_compradores_historicos
+from app.services.bi_geo_pendientes import pagina_direcciones_pendientes
 from app.services.bi_nominal_excel import (
     exportar_xlsx_clientes_registrados, exportar_xlsx_pedidos_nominales,
 )
@@ -126,6 +128,65 @@ def listar_pausas_clientes(
         filtros={"desde": desde.isoformat(), "hasta": hasta.isoformat(),
                  "peso_balon_kg": peso_balon_kg, "offset": offset,
                  "limit": limit},
+        filas=len(resultado["filas"]),
+    )
+    return resultado
+
+
+@router.get("/clientes/historicos")
+def listar_compradores_historicos(
+    fecha_corte: Annotated[date, Query()],
+    peso_balon_kg: Peso = "todos",
+    segmento: Literal["todos", "compra_unica_antigua", "recurrente_pausa_larga",
+                     "recurrente_pausa_relativa", "sin_senal_prioritaria"] = "todos",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    auditoria: AuditoriaNominal = Depends(iniciar_auditoria_nominal),
+    principal: PrincipalBI = Depends(require_bi_permission("ver_nominales")),
+    db: Session = Depends(get_bi_db),
+) -> dict:
+    resultado = _snapshot(_pagina_o_422(
+        pagina_compradores_historicos, db, fecha_corte=fecha_corte,
+        peso_balon_kg=_peso(peso_balon_kg), segmento=segmento,
+        offset=offset, limit=limit,
+    ))
+    auditoria.terminar(
+        "served", google_sub=principal.google_sub,
+        filtros={"fecha_corte": fecha_corte.isoformat(),
+                 "peso_balon_kg": peso_balon_kg, "segmento": segmento,
+                 "offset": offset, "limit": limit},
+        filas=len(resultado["filas"]),
+    )
+    return resultado
+
+
+@router.get("/geo/direcciones-pendientes")
+def listar_direcciones_geo_pendientes(
+    desde: Annotated[date, Query()],
+    hasta: Annotated[date, Query()],
+    peso_balon_kg: Peso = "todos",
+    estado: Literal["todos", "NO_GEOCODIFICADO", "SIN_RESULTADO",
+                   "RECHAZADO_PRECISION", "RECHAZADO_BOUNDS",
+                   "PENDIENTE_DUENO", "SIN_H3"] = "todos",
+    offset: Annotated[int, Query(ge=0, le=1_000_000)] = 0,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+    auditoria: AuditoriaNominal = Depends(iniciar_auditoria_nominal),
+    principal: PrincipalBI = Depends(require_bi_permission("ver_nominales")),
+    db: Session = Depends(get_bi_db),
+) -> dict:
+    try:
+        resultado = _snapshot(_pagina_o_422(
+            pagina_direcciones_pendientes, db, desde=desde, hasta=hasta,
+            peso_balon_kg=_peso(peso_balon_kg), estado=estado,
+            offset=offset, limit=limit,
+        ))
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Fuente GEO no disponible o inconsistente.") from None
+    auditoria.terminar(
+        "served", google_sub=principal.google_sub,
+        filtros={"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                 "peso_balon_kg": peso_balon_kg, "estado": estado,
+                 "offset": offset, "limit": limit},
         filas=len(resultado["filas"]),
     )
     return resultado

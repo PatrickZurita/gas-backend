@@ -135,7 +135,8 @@ def _medidas() -> dict[str, int]:
 
 
 def construir_corte(
-    db: Session | None, *, desde: date, hasta: date, peso_balon_kg: int | None = None
+    db: Session | None, *, desde: date, hasta: date, peso_balon_kg: int | None = None,
+    pedidos_base: list[repo_bi.PedidoBI] | None = None,
 ) -> CorteBI:
     """Construye resumen, serie diaria y actividad con un filtro único.
 
@@ -155,7 +156,7 @@ def construir_corte(
     if is_dynamodb_enabled() or db is None:
         raise RuntimeError("BI v1 solo está disponible para PostgreSQL")
 
-    pedidos = repo_bi.listar_activos_en_rango(
+    pedidos = pedidos_base if pedidos_base is not None else repo_bi.listar_activos_en_rango(
         db, desde=desde, hasta=hasta, peso_balon_kg=peso_balon_kg
     )
     compradores = {p.cliente_id for p in pedidos}

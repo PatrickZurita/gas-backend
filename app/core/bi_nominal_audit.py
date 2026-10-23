@@ -23,6 +23,8 @@ from fastapi import HTTPException, Request
 _ACCIONES = {
     ("GET", "/bi/v1/clientes"): "listar_clientes",
     ("GET", "/bi/v1/clientes/pausas"): "listar_pausas_clientes",
+    ("GET", "/bi/v1/clientes/historicos"): "listar_compradores_historicos",
+    ("GET", "/bi/v1/geo/direcciones-pendientes"): "listar_direcciones_geo_pendientes",
     ("GET", "/bi/v1/pedidos"): "listar_pedidos",
     ("POST", "/bi/v1/clientes/export"): "preparar_clientes_xlsx",
     ("POST", "/bi/v1/pedidos/export"): "preparar_pedidos_xlsx",
